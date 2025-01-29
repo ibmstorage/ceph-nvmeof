@@ -41,7 +41,7 @@ class GatewayState(ABC):
     def build_namespace_key(subsystem_nqn: str, nsid) -> str:
         key = GatewayState.NAMESPACE_PREFIX + subsystem_nqn + GatewayState.OMAP_KEY_DELIMITER
         if nsid is not None:
-            GatewayState.OMAP_KEY_DELIMITER + str(nsid)
+            key += str(nsid)
         return key
 
     def build_namespace_qos_key(subsystem_nqn: str, nsid) -> str:
