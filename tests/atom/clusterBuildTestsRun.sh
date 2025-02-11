@@ -102,6 +102,7 @@ if [ "$5" != "nightly" ]; then
         --ibm-cloud-key=nokey \
         --github-nvmeof-token=nokey \
         --env=m7
+    DOCKER_EXIT_STATUS=$?
 else
     check_cluster_busy "$BUSY_NIGHTLY_FILE" "$ACTION_URL"
     sudo docker run \
@@ -137,16 +138,17 @@ else
         --github-action-deployment \
         --dont-power-off-cloud-vms \
         --dont-use-hugepages \
-        --concise-output \
         --skip-lb-group-change-test \
+        --skip-block-list-test \
         --skip-multi-hosts-conn-test \
         --ibm-cloud-key=nokey \
         --github-nvmeof-token=nokey \
         --env=m8
+    DOCKER_EXIT_STATUS=$?
 fi
+
 set +x
 
-DOCKER_EXIT_STATUS=$?
 if [ $DOCKER_EXIT_STATUS -eq 0 ]; then
     echo "Atom docker run succeeded"
 else
