@@ -653,6 +653,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self.up_and_running = True
         self.rebalance = Rebalance(self)
         self.spdk_version = None
+        self.spdk_qos_timeslice = self.config.getint_with_default("spdk",
+                                                                  "qos_timeslice_in_usecs", None)
 
     def get_directories_for_key_file(self, key_type: str,
                                      subsysnqn: str, create_dir: bool = False) -> []:
@@ -2703,6 +2705,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
             set_qos_limits_args["r_mbytes_per_sec"] = request.r_mbytes_per_second
         if request.HasField("w_mbytes_per_second"):
             set_qos_limits_args["w_mbytes_per_sec"] = request.w_mbytes_per_second
+        if self.spdk_qos_timeslice:
+            set_qos_limits_args["timeslice_in_usecs"] = self.spdk_qos_timeslice
 
         ns_qos_entry = None
         if context:
