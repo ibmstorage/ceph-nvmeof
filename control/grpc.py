@@ -235,6 +235,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self._init_cluster_context()
         self.subsys_max_ns = {}
         self.host_info = SubsystemHostAuth()
+        self.spdk_qos_timeslice = self.config.getint_with_default("spdk",
+                                                                  "qos_timeslice_in_usecs", None)
 
     def create_host_psk_file(self, subsysnqn : str, hostnqn : str, psk_value : str) -> str:
         assert subsysnqn, "Subsystem NQN can't be empty"
@@ -1612,6 +1614,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
             set_qos_limits_args["r_mbytes_per_sec"] = request.r_mbytes_per_second
         if request.HasField("w_mbytes_per_second"):
             set_qos_limits_args["w_mbytes_per_sec"] = request.w_mbytes_per_second
+        if self.spdk_qos_timeslice:
+            set_qos_limits_args["timeslice_in_usecs"] = self.spdk_qos_timeslice
 
         ns_qos_entry = None
         if context:
