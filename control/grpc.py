@@ -144,6 +144,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self._init_cluster_context()
         self.subsys_ha = {}
         self.subsys_max_ns = {}
+        self.spdk_qos_timeslice = self.config.getint_with_default("spdk",
+                                                                  "qos_timeslice_in_usecs", None)
 
     def is_valid_host_nqn(nqn):
         if nqn == "*":
@@ -1455,6 +1457,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
             set_qos_limits_args["r_mbytes_per_sec"] = request.r_mbytes_per_second
         if request.HasField("w_mbytes_per_second"):
             set_qos_limits_args["w_mbytes_per_sec"] = request.w_mbytes_per_second
+        if self.spdk_qos_timeslice:
+            set_qos_limits_args["timeslice_in_usecs"] = self.spdk_qos_timeslice
 
         ns_qos_entry = None
         if context:
