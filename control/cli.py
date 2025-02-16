@@ -196,6 +196,7 @@ class GatewayClient:
     """
 
     SIZE_UNITS = ["K", "M", "G", "T", "P"]
+    MAX_MB_PER_SECOND = int(0xffffffffffffffff / (1024 * 1024))
     cli = Parser()
 
     def __init__(self):
@@ -2260,7 +2261,7 @@ class GatewayClient:
     def ns_set_qos(self, args):
         """Set namespace QOS limits."""
 
-        out_func, err_func, _ = self.get_output_functions(args)
+        out_func, err_func, wrn_func = self.get_output_functions(args)
         if args.nsid <= 0:
             self.cli.parser.error("nsid value must be positive")
         if args.rw_ios_per_second is None:
@@ -2272,8 +2273,23 @@ class GatewayClient:
         if args.format == "text" or args.format == "plain":
             if args.rw_ios_per_second and (args.rw_ios_per_second % 1000) != 0:
                 rounded_rate = int((args.rw_ios_per_second + 1000) / 1000) * 1000
-                err_func(f"IOs per second {args.rw_ios_per_second} will be "
+                wrn_func(f"IOs per second {args.rw_ios_per_second} will be "
                          f"rounded up to {rounded_rate}")
+            if args.rw_megabytes_per_second:
+                if args.rw_megabytes_per_second > GatewayClient.MAX_MB_PER_SECOND:
+                    wrn_func(f"Read/Write megabytes per second {args.rw_megabytes_per_second} "
+                             f"is too big, it will be truncated to "
+                             f"{GatewayClient.MAX_MB_PER_SECOND}")
+            if args.r_megabytes_per_second:
+                if args.r_megabytes_per_second > GatewayClient.MAX_MB_PER_SECOND:
+                    wrn_func(f"Read megabytes per second {args.r_megabytes_per_second} "
+                             f"is too big, it will be truncated to "
+                             f"{GatewayClient.MAX_MB_PER_SECOND}")
+            if args.w_megabytes_per_second:
+                if args.w_megabytes_per_second > GatewayClient.MAX_MB_PER_SECOND:
+                    wrn_func(f"Write megabytes per second {args.w_megabytes_per_second} "
+                             f"is too big, it will be truncated to "
+                             f"{GatewayClient.MAX_MB_PER_SECOND}")
 
         qos_args = {}
         qos_args["subsystem_nqn"] = args.subsystem

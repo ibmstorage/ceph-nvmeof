@@ -2664,6 +2664,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_set_qos_limits_safe(self, request, context):
         """Set namespace's qos limits."""
 
+        max_mb_per_second = int(0xffffffffffffffff / (1024 * 1024))
+
         failure_prefix = f"Failure setting QOS limits for namespace {request.nsid} " \
                          f"on {request.subsystem_nqn}"
         peer_msg = self.get_peer_message(context)
@@ -2694,6 +2696,28 @@ class GatewayService(pb2_grpc.GatewayServicer):
             errmsg = f"{failure_prefix}: Can't find associated block device"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+
+        if request.HasField("rw_ios_per_second"):
+            if request.rw_ios_per_second % 1000 != 0:
+                rounded_rate = int((request.rw_ios_per_second + 1000) / 1000) * 1000
+                self.logger.warning(f"IOs per second {request.rw_ios_per_second} will be "
+                                    f"rounded up to {rounded_rate}")
+
+        if request.HasField("rw_mbytes_per_second"):
+            if request.rw_mbytes_per_second > max_mb_per_second:
+                self.logger.warning(f"Read/Write megabytes per second "
+                                    f"{request.rw_mbytes_per_second} is too big, "
+                                    f"it will be truncated to {max_mb_per_second}")
+        if request.HasField("r_mbytes_per_second"):
+            if request.r_mbytes_per_second > max_mb_per_second:
+                self.logger.warning(f"Read megabytes per second "
+                                    f"{request.r_mbytes_per_second} is too big, "
+                                    f"it will be truncated to {max_mb_per_second}")
+        if request.HasField("w_mbytes_per_second"):
+            if request.w_mbytes_per_second > max_mb_per_second:
+                self.logger.warning(f"Write megabytes per second "
+                                    f"{request.w_mbytes_per_second} is too big, "
+                                    f"it will be truncated to {max_mb_per_second}")
 
         set_qos_limits_args = {}
         set_qos_limits_args["name"] = bdev_name
