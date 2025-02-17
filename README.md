@@ -54,6 +54,19 @@ curl -O https://bootstrap.pypa.io/get-pip.py
 sudo python get-pip.py
 ```
 
+Notice that you can disable a specific flake8 error by adding a comment of "noqa:" followed by the error code to the line.
+For example:
+
+```
+    unused_variable = 5     # noqa: F841
+```
+
+if you want to ignore a specific error in all files, you can add the error code to the "ignore" field in `tox.ini`.
+For example:
+```
+ignore = E501,E251,E225
+```
+
 If you dont have make installed and encounter the error "make: command not found", you can install it by running the following:
 
 ```
