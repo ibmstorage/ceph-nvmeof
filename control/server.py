@@ -501,6 +501,7 @@ class GatewayServer:
 
         # Start target
         self.logger.debug(f"Configuring server {self.name}")
+        waiting_for_rpc = False
         spdk_tgt_path = self.config.get("spdk", "tgt_path")
         self.logger.info(f"SPDK Target Path: {spdk_tgt_path}")
         sockdir = self.config.get_with_default("spdk", "rpc_socket_dir", "/var/tmp/")
@@ -525,7 +526,11 @@ class GatewayServer:
         cmd = [spdk_tgt_path, "-u", "-r", self.spdk_rpc_socket_path]
 
         iobuf_options = self.config.get_with_default("spdk", "iobuf_options", "")
-        if iobuf_options:
+        max_subsystems = self.config.getint_with_default("gateway",
+                                                         "max_subsystems",
+                                                         GatewayService.MAX_SUBSYSTEMS_DEFAULT)
+        if iobuf_options or max_subsystems > 0:
+            waiting_for_rpc = True
             cmd += ["--wait-for-rpc"]
 
         # Add extra args from the conf file
@@ -598,8 +603,16 @@ class GatewayServer:
                 conn_retries=conn_retries,
             )
 
+            # Set max subsystems
+            if max_subsystems > 0:
+                self._set_max_subsystems(max_subsystems)
+
             # Initialize pool and buffer sizes
-            self._initialize_iobuf_options(iobuf_options)
+            if iobuf_options:
+                self._initialize_iobuf_options(iobuf_options)
+
+            if waiting_for_rpc:
+                self._initialize_framework()
 
             self.spdk_rpc_ping_client = rpc_client.JSONRPCClient(
                 self.spdk_rpc_socket_path,
@@ -713,11 +726,17 @@ class GatewayServer:
 
         self.discovery_pid = None
 
+    def _set_max_subsystems(self, max_subsystems):
+        """Sets SPDK's max subsystems attribute."""
+
+        try:
+            rpc_nvmf.nvmf_set_max_subsystems(self.spdk_rpc_client, max_subsystems=max_subsystems)
+        except Exception:
+            self.logger.exception(f"Failure setting max subsystems {max_subsystems}")
+            pass
+
     def _initialize_iobuf_options(self, options):
         """Initialize pool and buffer sizes."""
-
-        if not options:
-            return
 
         args = {}
         self.logger.debug(f"initialize_iobuf_options: options: {options}")
@@ -733,6 +752,9 @@ class GatewayServer:
         except Exception:
             self.logger.exception("IObuf set options returned with error")
             pass
+
+    def _initialize_framework(self):
+        """In case we started SPDK with the "wait for rpc" flag, we need to call this"""
 
         try:
             spdk.rpc.framework_start_init(self.spdk_rpc_client)
