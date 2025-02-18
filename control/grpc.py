@@ -4718,8 +4718,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
             ret = rpc_nvmf.nvmf_get_subsystems(self.spdk_rpc_subsystems_client)
         except Exception as ex:
             self.logger.exception("get_subsystems failed")
-            context.set_code(grpc.StatusCode.INTERNAL)
-            context.set_details(f"{ex}")
+            if context:
+                context.set_code(grpc.StatusCode.INTERNAL)
+                context.set_details(f"{ex}")
             return pb2.subsystems_info()
 
         for s in ret:
