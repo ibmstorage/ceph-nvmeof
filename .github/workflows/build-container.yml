@@ -717,6 +717,7 @@ jobs:
     needs: [build, build-ceph]
     if: github.repository == 'ceph/ceph-nvmeof' && github.event_name == 'schedule'
     runs-on: nightlyAtomRunner
+    timeout-minutes: 1440
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -733,6 +734,7 @@ jobs:
           . .env
           ACTION_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           stdbuf -oL -eL ./tests/atom/clusterBuildTestsRun.sh $NVMEOF_VERSION $CEPH_SHA $ATOM_SHA $ACTION_URL 'nightly' 2>&1 | tee nightly_nvmeof_console.log
+          exit ${PIPESTATUS[0]}
 
       - name: Atom artifact build nightly
         if: always()
@@ -754,7 +756,7 @@ jobs:
 
   push-images-to-ceph-registry:
     if: github.event_name == 'release'
-    needs: [pytest, demo, discovery, ha, atom, build-arm64]
+    needs: [pytest, demo, discovery, ha, atom]
     runs-on: ubuntu-latest
 
     steps:
