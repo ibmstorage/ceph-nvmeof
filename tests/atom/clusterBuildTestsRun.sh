@@ -9,7 +9,7 @@ set -e
 VERSION=$1
 if [ "$2" = "latest" ]; then
     # CEPH_SHA=$(curl -s https://shaman.ceph.com/api/repos/ceph/main/latest/centos/9/ | jq -r ".[] | select(.archs[] == \"$(uname -m)\" and .status == \"ready\") | .sha1")
-    CEPH_SHA=bafdb09a6114f9fc4356d1a7707148de9a146db3
+    CEPH_SHA=74372254afdcd02a5d98f66452086fe8a0216597
 else
     CEPH_SHA=$2
 fi
@@ -100,6 +100,7 @@ if [ "$5" != "nightly" ]; then
         --mtls \
         --journalctl-to-console \
         --dont-power-off-cloud-vms \
+        --skip-lb-group-change-test \
         --ibm-cloud-key=nokey \
         --github-nvmeof-token=nokey \
         --env=m7
@@ -119,8 +120,8 @@ else
         --gw-num=4 \
         --gw-to-stop-num=1 \
         --gw-scale-down-num=1 \
-        --subsystem-num=118 \
-        --ns-num=8 \
+        --subsystem-num=4 \
+        --ns-num=230 \
         --subsystem-max-ns-num=1024 \
         --failover-num=10 \
         --failover-num-after-upgrade=2 \
