@@ -700,7 +700,7 @@ jobs:
         run: |
           . .env
           ACTION_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          ./tests/atom/clusterBuildTestsRun.sh $NVMEOF_VERSION $CEPH_SHA $ATOM_SHA $ACTION_URL
+          ./tests/atom/clusterBuildTestsRun.sh $NVMEOF_VERSION $CEPH_BRANCH $CEPH_SHA $ATOM_SHA $ACTION_URL
 
       - name: Atom artifact build
         if: always()
@@ -733,7 +733,7 @@ jobs:
         run: |
           . .env
           ACTION_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          stdbuf -oL -eL ./tests/atom/clusterBuildTestsRun.sh $NVMEOF_VERSION $CEPH_SHA $ATOM_SHA $ACTION_URL 'nightly' 2>&1 | tee nightly_nvmeof_console.log
+          stdbuf -oL -eL ./tests/atom/clusterBuildTestsRun.sh $NVMEOF_VERSION $CEPH_BRANCH $CEPH_SHA $ATOM_SHA $ACTION_URL 'nightly' 2>&1 | tee nightly_nvmeof_console.log
           exit ${PIPESTATUS[0]}
 
       - name: Atom artifact build nightly
