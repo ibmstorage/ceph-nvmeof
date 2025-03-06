@@ -7,14 +7,15 @@ set -e
 
 
 VERSION=$1
-if [ "$2" = "latest" ]; then
+CEPH_BRANCH=$2
+if [ "$3" = "latest" ]; then
     CEPH_SHA=$(curl -s https://shaman.ceph.com/api/repos/ceph/main/latest/centos/9/ | jq -r ".[] | select(.archs[] == \"$(uname -m)\" and .status == \"ready\") | .sha1")
 else
-    CEPH_SHA=$2
+    CEPH_SHA=$3
 fi
-ATOM_SHA=$3
-ACTION_URL=$4
-NIGHTLY=$5
+ATOM_SHA=$4
+ACTION_URL=$5
+NIGHTLY=$6
 
 RUNNER_FOLDER='/home/cephnvme/actions-runner-ceph-m7'
 BUSY_FILE='/home/cephnvme/busyServer.txt'
@@ -70,6 +71,7 @@ if [ "$5" != "nightly" ]; then
         python3 atom.py \
         --project=nvmeof \
         --ceph-img=quay.ceph.io/ceph-ci/ceph:"$CEPH_SHA" \
+        --ceph-branch="$CEPH_BRANCH" \
         --gw-img=quay.io/ceph/nvmeof:"$VERSION" \
         --cli-img=quay.io/ceph/nvmeof-cli:"$VERSION" \
         --initiators=1 \
