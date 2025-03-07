@@ -247,7 +247,8 @@ class NVMeOFCollector:
                 'port': self.gw_metadata.port,
                 'name': self.gw_metadata.name,
                 'hostname': self.hostname,
-                'group': self.gw_metadata.group
+                'group': self.gw_metadata.group,
+                'load_balancing_group': self.gw_metadata.load_balancing_group,
             })
         yield gateway_info
 
