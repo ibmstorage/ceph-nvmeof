@@ -40,7 +40,7 @@ check_cluster_busy() {
 }
 
 hostname
-if [ "$5" != "nightly" ]; then
+if [ "$NIGHTLY" != "nightly" ]; then
     rm -rf $RUNNER_FOLDER/ceph-nvmeof-atom
     sudo rm -rf /root/.ssh/atom_backup/artifact/multiIBMCloudServers_m7/*
     sudo ls -lta /root/.ssh/atom_backup/artifact/multiIBMCloudServers_m7
@@ -63,7 +63,7 @@ git checkout $ATOM_SHA
 sudo docker build -t nvmeof_atom:$ATOM_SHA .
 
 set -x
-if [ "$5" != "nightly" ]; then
+if [ "$NIGHTLY" != "nightly" ]; then
     check_cluster_busy "$BUSY_FILE" "$ACTION_URL"
     sudo docker run \
         -v /root/.ssh:/root/.ssh \
