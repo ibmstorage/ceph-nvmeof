@@ -8,7 +8,7 @@ GW1_NAME=$(docker ps --format '{{.ID}}\t{{.Names}}' | awk '$2 ~ /nvmeof/ && $2 ~
 GW1_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$GW1_NAME")"
 cephnvmf="docker compose run --rm nvmeof-cli --server-address $GW1_IP --server-port 5500"
 
-$cephnvmf subsystem add --subsystem $NQN --max-namespaces 1024 --no-group-append
+$cephnvmf subsystem add --subsystem $NQN --max-namespaces 1024
 
 for i in `seq 1 $NS_COUNT`
 do
