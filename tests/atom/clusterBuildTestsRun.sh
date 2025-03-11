@@ -114,6 +114,7 @@ else
         python3 atom.py \
         --project=nvmeof \
         --ceph-img=quay.ceph.io/ceph-ci/ceph:"$CEPH_SHA" \
+        --ceph-branch="$CEPH_BRANCH" \
         --gw-img=quay.io/ceph/nvmeof:"$VERSION" \
         --cli-img=quay.io/ceph/nvmeof-cli:"$VERSION" \
         --initiators=1 \
