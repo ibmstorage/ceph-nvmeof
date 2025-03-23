@@ -10,8 +10,6 @@ on:  # yamllint disable rule:truthy
   pull_request:
     branches:
       - '*'
-  schedule:
-    - cron: '0 0 * * *'
   workflow_dispatch:
   release:
     types:
@@ -50,14 +48,20 @@ jobs:
           docker save $QUAY_NVMEOFCLI:$NVMEOF_VERSION > nvmeof-cli.tar
           docker save bdevperf > bdevperf.tar
 
-      - name: Upload container images
+      - name: Upload bdevperf container image
         uses: actions/upload-artifact@v4
         with:
-          name: container_images
+          name: container_images_bdevperf
+          path: |
+            bdevperf.tar
+
+      - name: Upload nvmeof container images
+        uses: actions/upload-artifact@v4
+        with:
+          name: container_images_nvmeof
           path: |
             nvmeof.tar
             nvmeof-cli.tar
-            bdevperf.tar
 
   build-ceph:
     runs-on: ubuntu-latest
@@ -173,19 +177,16 @@ jobs:
           # Managing pytest’s output: https://docs.pytest.org/en/7.1.x/how-to/output.html
           make run SVC="nvmeof" OPTS="--volume=$(pwd)/tests:/src/tests --entrypoint=python3" CMD="-m pytest --show-capture=all -s --full-trace -vv -rA tests/test_${{ matrix.test }}.py"
 
-      - name: Check coredump existence
+      - name: Copy ceph logs
         if: success() || failure()
-        id: check_coredumps
-        uses: andstor/file-existence-action@20b4d2e596410855db8f9ca21e96fbe18e12930b  # v2, pinned to SHA for security reasons
-        with:
-          files: "/tmp/coredump/core.*"
+        run: docker cp  ceph:/ceph/out /tmp/out
 
-      - name: Upload ${{ matrix.test }} test core dumps
-        if: steps.check_coredumps.outputs.files_exists == 'true'
+      - name: Upload ceph logs
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
-          name: core_pytest_${{ matrix.test }}
-          path: /tmp/coredump/core.*
+          name: ceph_out_pytest_${{ matrix.test }}
+          path: /tmp/out/*.log
 
       - name: Display logs
         if: success() || failure()
@@ -304,20 +305,6 @@ jobs:
           timeout=$(expr $BDEVPERF_TEST_DURATION \* 2)
           bdevperf="/usr/libexec/spdk/scripts/bdevperf.py"
           make exec SVC=bdevperf OPTS=-T CMD="$bdevperf -v -t $timeout -s $BDEVPERF_SOCKET perform_tests"
-
-      - name: Check coredump existence
-        if: success() || failure()
-        id: check_coredumps
-        uses: andstor/file-existence-action@20b4d2e596410855db8f9ca21e96fbe18e12930b  # v2, pinned to SHA for security reasons
-        with:
-          files: "/tmp/coredump/core.*"
-
-      - name: Upload demo core dumps
-        if: steps.check_coredumps.outputs.files_exists == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: core_demo
-          path: /tmp/coredump/core.*
 
       # For debugging purposes (provides an SSH connection to the runner)
       # - name: Setup tmate session
@@ -493,20 +480,6 @@ jobs:
           bdevperf="/usr/libexec/spdk/scripts/bdevperf.py"
           make exec SVC=bdevperf OPTS=-T CMD="$bdevperf -v -t $timeout -s $BDEVPERF_SOCKET perform_tests"
 
-      - name: Check coredump existence
-        if: success() || failure()
-        id: check_coredumps
-        uses: andstor/file-existence-action@20b4d2e596410855db8f9ca21e96fbe18e12930b  # v2, pinned to SHA for security reasons
-        with:
-          files: "/tmp/coredump/core.*"
-
-      - name: Upload demo core dumps
-        if: steps.check_coredumps.outputs.files_exists == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: core_demo
-          path: /tmp/coredump/core.*
-
       - name: Display logs
         if: success() || failure()
         run: make logs OPTS=''
@@ -522,7 +495,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: ["sanity", "state_transitions", "state_transitions_both_gws", "state_transitions_loop", "state_transitions_rand_loop", "late_registration", "late_registration_loop", "4gws", "4gws_loop", "namespaces", "namespaces_loop", "mtls"]
+        test: ["sanity", "state_transitions", "state_transitions_both_gws", "state_transitions_loop", "state_transitions_rand_loop", "late_registration", "late_registration_loop", "4gws", "4gws_loop", "namespaces", "namespaces_loop", "mtls", "set_qos", "set_qos_2ms"]
     runs-on: ubuntu-latest
     env:
       HUGEPAGES: 1024  # 4 spdk instances
@@ -593,20 +566,6 @@ jobs:
           . .env
           source "tests/ha/${{ matrix.test }}.sh"
 
-      - name: Check coredump existence
-        if: success() || failure()
-        id: check_coredumps
-        uses: andstor/file-existence-action@20b4d2e596410855db8f9ca21e96fbe18e12930b  # v2, pinned to SHA for security reasons
-        with:
-          files: "/tmp/coredump/core.*"
-
-      - name: Upload ha core dumps
-        if: steps.check_coredumps.outputs.files_exists == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: core_demo
-          path: /tmp/coredump/core.*
-
       - name: Copy ceph logs
         if: success() || failure()
         run: docker cp  ceph:/ceph/out /tmp/out
@@ -628,11 +587,10 @@ jobs:
           make down
           make clean
 
-  push-images-to-private-registry:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/devel' && github.repository == 'ceph/ceph-nvmeof'
-    needs: [pytest, demo, discovery, ha]
-    runs-on: ubuntu-latest
-
+  atom:
+    needs: [build, build-ceph]
+    if: github.repository == 'ceph/ceph-nvmeof' && github.event_name != 'schedule'
+    runs-on: dailyAtomRunner
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -640,50 +598,23 @@ jobs:
       - name: Download container images
         uses: actions/download-artifact@v4
         with:
-          name: container_images
+          pattern: container_images_nvmeof
+          merge-multiple: true
 
-      - name: Load container images
+      - name: Cluster build and Atom tests run
+        if: always()
         run: |
-          docker load < nvmeof.tar
-          docker load < nvmeof-cli.tar
+          . .env
+          ACTION_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          ./tests/atom/clusterBuildTestsRun.sh $NVMEOF_VERSION $CEPH_BRANCH $CEPH_SHA $ATOM_SHA $ACTION_URL
 
-      - name: Login to quay.io
-        uses: docker/login-action@v2
+      - name: Atom artifact build
+        if: always()
+        run: ./tests/atom/cpArtifactAndCleanup.sh
+
+      - name: Upload artifact for non-schedule events
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          registry: ${{ vars.CONTAINER_REGISTRY }}
-          username: '${{ vars.CONTAINER_PRIVATE_REGISTRY_USERNAME }}'
-          password: '${{ secrets.CONTAINER_PRIVATE_REGISTRY_PASSWORD }}'
-
-      - name: Publish nvmeof containers when release/tag is created
-        run: |
-          make push QUAY="${{ vars.CONTAINER_REGISTRY }}/${{ vars.CONTAINER_PRIVATE_REGISTRY_USERNAME }}"
-
-  push-images-to-ceph-registry:
-    if: github.event_name == 'release'
-    needs: [pytest, demo, discovery, ha]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download container images
-        uses: actions/download-artifact@v4
-        with:
-          name: container_images
-
-      - name: Load container images
-        run: |
-          docker load < nvmeof.tar
-          docker load < nvmeof-cli.tar
-
-      - name: Login to quay.io
-        uses: docker/login-action@v2
-        with:
-          registry: ${{ vars.CONTAINER_REGISTRY }}
-          username: '${{ vars.CONTAINER_REGISTRY_USERNAME }}'
-          password: '${{ secrets.CONTAINER_REGISTRY_PASSWORD }}'
-
-      - name: Publish nvmeof containers when release/tag is created
-        run: |
-          make push QUAY="${{ vars.CONTAINER_REGISTRY_USERNAME }}"
+          name: atom-artifact
+          path: /home/cephnvme/artifact_m7.tar.gz
