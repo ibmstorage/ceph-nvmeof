@@ -24,4 +24,4 @@ tomli==2.2.1
 trove-classifiers==2023.8.7
 typing-extensions==4.7.1
 wheel==0.41.2
-cryptography: 44.0.2
+cryptography==44.0.2
