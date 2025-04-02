@@ -82,8 +82,8 @@ class CephUtils:
                     self.rebalance_supported = True
                     self.rebalance_ana_group = data.get("rebalance_ana_group", None)
                     self.num_gws = data.get("num gws", None)
-                    self.logger.info(f"Rebalance ana_group: {self.rebalance_ana_group}, "
-                                     f"num-gws: {self.num_gws}")
+                    self.logger.debug(f"Rebalance ana_group: {self.rebalance_ana_group}, "
+                                      f"num-gws: {self.num_gws}")
                 else:
                     self.rebalance_supported = False
                 pos = conv_str.find("[")
@@ -95,7 +95,7 @@ class CephUtils:
                     self.logger.debug(f"new_str : {new_str}")
                     for x in int_str_list:
                         self.anagroup_list.append(int(x))
-                    self.logger.info(f"ANA group list: {self.anagroup_list}")
+                    self.logger.debug(f"ANA group list: {self.anagroup_list}")
                 else:
                     self.logger.warning("GWs not found")
 
