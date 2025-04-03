@@ -1119,7 +1119,7 @@ class GatewayStateHandler:
 
                 # Find OMAP additions
                 added_keys = omap_state_keys - local_state_keys
-                self.logger.info(f"Added keys: {added_keys}")
+                self.logger.debug(f"Added keys: {added_keys}")
                 added = {key: omap_state_dict[key] for key in added_keys}
                 grouped_added = self._group_by_prefix(added, prefix_list)
                 # Find OMAP changes
