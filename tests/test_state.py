@@ -22,7 +22,7 @@ def local_state():
 @pytest.fixture
 def omap_state(config):
     """Sets up and tears down OMAP state object."""
-    omap = OmapGatewayState(config, "test")
+    omap = OmapGatewayState(config, None, "test")
     omap.delete_state()
     yield omap
     omap.delete_state()

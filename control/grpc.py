@@ -554,7 +554,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def __init__(self, config: GatewayConfig, gateway_state: GatewayStateHandler,
                  rpc_lock, omap_lock: OmapLock, group_id: int, spdk_rpc_client,
-                 spdk_rpc_subsystems_client, ceph_utils: CephUtils) -> None:
+                 spdk_rpc_subsystems_client, ceph_utils: CephUtils,
+                 set_gateway_exit_message) -> None:
         """Constructor"""
         self.gw_logger_object = GatewayLogger(config)
         self.logger = self.gw_logger_object.logger
@@ -621,6 +622,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
             "gateway",
             "enable_key_encryption",
             True)
+        # This is an option for development, normally we should abort the gateway on
+        # errors, this should only be used in case of some catastrophe when we
+        # want to keep the gateway up
+        self.abort_on_errors = self.config.getboolean_with_default(
+            "gateway",
+            "abort_on_errors",
+            True)
         self.ana_map = defaultdict(dict)
         self.ana_grp_state = {}
         self.ana_grp_ns_load = {}
@@ -655,6 +663,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self.spdk_version = None
         self.spdk_qos_timeslice = self.config.getint_with_default("spdk",
                                                                   "qos_timeslice_in_usecs", None)
+        self.set_gateway_exit_message = set_gateway_exit_message
 
     def get_directories_for_key_file(self, key_type: str,
                                      subsysnqn: str, create_dir: bool = False) -> []:
@@ -867,12 +876,33 @@ class GatewayService(pb2_grpc.GatewayServicer):
             self.logger.info(f"Allocated cluster {name=} {nonce=}")
             self.cluster_nonce[name] = nonce
 
+    def abort_gateway_if_needed(self, where: str) -> None:
+        if self.abort_on_errors:
+            msg = f"Will abort gateway because of an error in {where}"
+            self.logger.critical(msg)
+            self.abort_on_errors = False
+            self.up_and_running = False
+            if self.set_gateway_exit_message is not None:
+                if not self.set_gateway_exit_message(msg):
+                    self.logger.warning(f"Can't get an indication about the gateway aborting. "
+                                        f"Will continue after an error in {where}")
+            else:
+                self.logger.warning(f"No gateway exit function set, will continue after "
+                                    f"an error in {where}")
+        else:
+            self.logger.warning(f"Gateway abort is disabled, will continue after "
+                                f"an error in {where}")
+
     def _grpc_function_with_lock(self, func, request, context):
         with self.rpc_lock:
             rc = func(request, context)
             if not self.omap_lock.omap_file_disable_unlock:
-                assert not self.omap_lock.locked(), f"OMAP is still locked when " \
-                                                    f"we're out of function {func}"
+                assert not self.omap_lock.write_locked_by_me(), \
+                    f"OMAP is still locked when exiting function {func.__name__}()\n" \
+                    f"locked by: {self.omap_lock.locked_by}, " \
+                    f"with cookie: {self.omap_lock.lock_cookie}" \
+                    f"current thread id: {threading.get_native_id()} " \
+                    f"locked: {self.omap_lock.is_exclusively_locked}"
             return rc
 
     def execute_grpc_function(self, func, request, context):
@@ -887,8 +917,16 @@ class GatewayService(pb2_grpc.GatewayServicer):
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.ESHUTDOWN, error_message=errmsg)
 
-        return self.omap_lock.execute_omap_locking_function(
-            self._grpc_function_with_lock, func, request, context)
+        try:
+            rc = self.omap_lock.execute_omap_locking_function(
+                self._grpc_function_with_lock, func, request, context)
+        except Exception:
+            self.logger.exception(f"Failure while executing {func.__name__}()")
+            self.abort_gateway_if_needed(f"{func.__name__}()")
+            return pb2.req_status(status=errno.ESHUTDOWN,
+                                  error_message="Shutting down server")
+
+        return rc
 
     def create_bdev(self, anagrp: int, name, uuid, rbd_pool_name, rbd_image_name,
                     block_size, create_image, trash_image, rbd_image_size, context, peer_msg=""):
@@ -1520,8 +1558,11 @@ class GatewayService(pb2_grpc.GatewayServicer):
                          auto_visible, rbd_pool, rbd_image_name, trash_image, context):
         """Adds a namespace to a subsystem."""
 
-        if context:
-            assert self.omap_lock.locked(), "OMAP is unlocked when calling create_namespace()"
+        assert context is None or self.omap_lock.write_locked_by_me(), \
+            f"OMAP is unlocked when calling create_namespace()\n" \
+            f"in thread: {threading.get_native_id()}. Locked by: " \
+            f"{self.omap_lock.locked_by}, with cookie: {self.omap_lock.lock_cookie}, " \
+            f"locked: {self.omap_lock.is_exclusively_locked}"
 
         assert (rbd_pool and rbd_image_name) or ((not rbd_pool) and (not rbd_image_name)), \
             "RBD pool and image name should either be both set or both empty"
@@ -2325,9 +2366,11 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if not context:
             return pb2.req_status(status=0, error_message=os.strerror(0))
 
-        # If we got here context is not None, so we must hold the OMAP lock
-        assert self.omap_lock.locked(), "OMAP is unlocked when calling " \
-                                        "remove_namespace_from_state()"
+        assert context is None or self.omap_lock.write_locked_by_me(), \
+            f"OMAP is unlocked when calling remove_namespace_from_state()\n" \
+            f"in thread: {threading.get_native_id()}. Locked by: " \
+            f"{self.omap_lock.locked_by}, with cookie: {self.omap_lock.lock_cookie}, " \
+            f"locked: {self.omap_lock.is_exclusively_locked}"
 
         # Update gateway state
         try:
@@ -2356,8 +2399,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def remove_namespace(self, subsystem_nqn, nsid, context):
         """Removes a namespace from a subsystem."""
 
-        if context:
-            assert self.omap_lock.locked(), "OMAP is unlocked when calling remove_namespace()"
+        assert context is None or self.omap_lock.write_locked_by_me(), \
+            f"OMAP is unlocked when calling remove_namespace()\n" \
+            f"in thread: {threading.get_native_id()}. Locked by: " \
+            f"{self.omap_lock.locked_by}, with cookie: {self.omap_lock.lock_cookie}, " \
+            f"locked: {self.omap_lock.is_exclusively_locked}"
+
         peer_msg = self.get_peer_message(context)
         namespace_failure_prefix = f"Failure removing namespace {nsid} from {subsystem_nqn}"
         self.logger.info(f"Received request to remove namespace {nsid} from "
@@ -3594,8 +3641,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if not context:
             return pb2.req_status(status=0, error_message=os.strerror(0))
 
-        if context:
-            assert self.omap_lock.locked(), "OMAP is unlocked when calling remove_host_from_state()"
+        assert context is None or self.omap_lock.write_locked_by_me(), \
+            f"OMAP is unlocked when calling remove_host_from_state()\n" \
+            f"in thread: {threading.get_native_id()}. Locked by: " \
+            f"{self.omap_lock.locked_by}, with cookie: {self.omap_lock.lock_cookie}, " \
+            f"locked: {self.omap_lock.is_exclusively_locked}"
+
         # Update gateway state
         try:
             self.gateway_state.remove_host(subsystem_nqn, host_nqn)
@@ -4332,9 +4383,11 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if not context:
             return pb2.req_status(status=0, error_message=os.strerror(0))
 
-        if context:
-            assert self.omap_lock.locked(), "OMAP is unlocked when calling " \
-                                            "remove_listener_from_state()"
+        assert context is None or self.omap_lock.write_locked_by_me(), \
+            f"OMAP is unlocked when calling remove_listener_from_state()\n" \
+            f"in thread: {threading.get_native_id()}. Locked by: " \
+            f"{self.omap_lock.locked_by}, with cookie: {self.omap_lock.lock_cookie}, " \
+            f"locked: {self.omap_lock.is_exclusively_locked}"
 
         host_name = host_name.strip()
         listener_hosts = []

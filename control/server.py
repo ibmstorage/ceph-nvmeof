@@ -99,6 +99,8 @@ class GatewayServer:
         discovery_pid: Subprocess running Ceph nvmeof discovery service
     """
 
+    MAX_TIME_TO_WAIT_FOR_GATEWAY_EXIT = 30
+
     def __init__(self, config: GatewayConfig):
         self.config = config
         self.gw_logger_object = GatewayLogger(self.config)
@@ -121,6 +123,9 @@ class GatewayServer:
         self.omap_state = None
         self.omap_lock = None
         self.crypto = None
+        self.gateway_state = None
+        self.exiting = False
+        self.is_gateway_process = True
         enc_key = None
         enc_key_file = self.config.get_with_default("gateway", "encryption_key", "")
         if enc_key_file:
@@ -140,6 +145,9 @@ class GatewayServer:
         self.name = self.config.get("gateway", "name")
         if not self.name:
             self.name = socket.gethostname()
+        self.system_exit_message = None
+        self.system_exit_message_lock = threading.Lock()
+        self.gateway_exit_started = threading.Event()
         self.logger.info(f"Starting gateway {self.name}")
 
     def __enter__(self):
@@ -147,16 +155,39 @@ class GatewayServer:
 
     def __exit__(self, exc_type, exc_value, traceback):
         """Cleans up SPDK and server instances."""
+
+        gw_logger = self.gw_logger_object
+        logger = None
+        if gw_logger:
+            logger = gw_logger.logger
+
+        # In case we got here because the discovery exited, do nothing
+        if not self.is_gateway_process:
+            process_name = "discovery"
+            if logger:
+                logger.info(f"Exiting the {process_name} process.")
+            return
+        else:
+            process_name = "gateway"
         if self.gateway_rpc:
             self.gateway_rpc.up_and_running = False
-        if exc_type is not None:
-            self.logger.exception("GatewayServer exception occurred:\n{traceback}\n")
-        else:
-            self.logger.info("GatewayServer is terminating gracefully...")
-
+        if self.gateway_state:
+            self.gateway_state.up_and_running = False
+            if self.gateway_state.omap:
+                self.gateway_state.omap.up_and_running = False
         gw_name = self.name
-        gw_logger = self.gw_logger_object
-        logger = gw_logger.logger
+        if self.exiting:
+            if logger:
+                logger.debug("Already exiting, do nothing")
+            return
+        self.exiting = True
+
+        if logger:
+            if exc_type is not None:
+                logger.exception("GatewayServer exception occurred:\n{traceback}\n")
+            else:
+                logger.info("GatewayServer is terminating gracefully...")
+
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         if self.monitor_client_process:
             self._stop_monitor_client()
@@ -201,8 +232,10 @@ class GatewayServer:
             self.omap_state = None
 
         if logger:
-            logger.info("Exiting the gateway process.")
-        gw_logger.compress_final_log_file(gw_name)
+            logger.info(f"Exiting the {process_name} process.")
+
+        if gw_logger and gw_name:
+            gw_logger.compress_final_log_file(gw_name)
 
     def set_group_id(self, id: int):
         self.logger.info(f"Gateway {self.name} group {id=}")
@@ -241,10 +274,10 @@ class GatewayServer:
         self.logger.info(f"Starting serve, monitor client version: "
                          f"{self._monitor_client_version()}")
 
-        omap_state = OmapGatewayState(self.config, f"gateway-{self.name}")
+        omap_state = OmapGatewayState(self.config, self.set_gateway_exit_message,
+                                      f"gateway-{self.name}")
         self.omap_state = omap_state
         local_state = LocalGatewayState()
-        omap_state.check_for_old_format_omap_files()
 
         # install SIGCHLD handler
         signal.signal(signal.SIGCHLD, sigchld_handler)
@@ -258,24 +291,25 @@ class GatewayServer:
         self.ceph_utils = CephUtils(self.config)
 
         # Start SPDK
-        self._start_spdk(omap_state)
+        self._start_spdk()
 
         # Start discovery service
         self._start_discovery_service()
 
         # Register service implementation with server
-        gateway_state = GatewayStateHandler(self.config, local_state, omap_state,
-                                            self.gateway_rpc_caller, self.crypto,
-                                            f"gateway-{self.name}")
-        self.omap_lock = OmapLock(omap_state, gateway_state, self.rpc_lock)
-        self.gateway_rpc = GatewayService(self.config, gateway_state, self.rpc_lock,
+        self.gateway_state = GatewayStateHandler(self.config, local_state, omap_state,
+                                                 self.gateway_rpc_caller, self.crypto,
+                                                 f"gateway-{self.name}")
+        self.omap_lock = OmapLock(self.gateway_state, self.rpc_lock)
+        self.gateway_rpc = GatewayService(self.config, self.gateway_state, self.rpc_lock,
                                           self.omap_lock, self.group_id, self.spdk_rpc_client,
-                                          self.spdk_rpc_subsystems_client, self.ceph_utils)
+                                          self.spdk_rpc_subsystems_client, self.ceph_utils,
+                                          self.set_gateway_exit_message)
         self.server = self._grpc_server(self._gateway_address())
         pb2_grpc.add_GatewayServicer_to_server(self.gateway_rpc, self.server)
 
         # Check for existing NVMeoF target state
-        gateway_state.start_update()
+        self.gateway_state.start_update()
 
         # Start server
         self.server.start()
@@ -400,6 +434,25 @@ class GatewayServer:
         self.discovery_pid = os.fork()
         if self.discovery_pid == 0:
             self.logger.info("Starting ceph nvmeof discovery service")
+            # Reset server related fields for the discovery process
+            self.is_gateway_process = False
+            self.spdk_process = None
+            self.monitor_client_process = None
+            self.spdk_log_file = None
+            self.spdk_log_file_path = None
+            self.monitor_client_log_file = None
+            self.monitor_client_log_file_path = None
+            self.omap_state = None
+            self.name = None
+            signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+            if self.server:
+                self.server.stop(None)
+                self.server = None
+            if self.gateway_rpc:
+                self.gateway_rpc.up_and_running = False
+                self.gateway_rpc = None
+            self.gateway_state = None
+            self.omap_lock = None
             with DiscoveryService(self.config) as discovery:
                 discovery.start_service()
             os._exit(0)
@@ -496,7 +549,7 @@ class GatewayServer:
 
         return log_file_path
 
-    def _start_spdk(self, omap_state):
+    def _start_spdk(self):
         """Starts SPDK process."""
 
         # Start target
@@ -719,7 +772,7 @@ class GatewayServer:
         # discovery service selector loop should exit due to KeyboardInterrupt exception
         try:
             os.kill(self.discovery_pid, signal.SIGINT)
-            os.waitpid(self.discovery_pid, 0)
+            os.waitpid(self.discovery_pid, os.WNOHANG)
         except (ChildProcessError, ProcessLookupError):
             pass          # ignore
         self.logger.info("Discovery service terminated")
@@ -783,6 +836,20 @@ class GatewayServer:
             self.logger.exception(f"Create Transport {trtype} returned with error")
             raise
 
+    def set_gateway_exit_message(self, msg):
+        with self.system_exit_message_lock:
+            self.system_exit_message = msg
+        return self.gateway_exit_started.wait(GatewayServer.MAX_TIME_TO_WAIT_FOR_GATEWAY_EXIT)
+
+    def exit_gateway_if_needed(self):
+        exit_msg = None
+        with self.system_exit_message_lock:
+            exit_msg = self.system_exit_message
+        if exit_msg is not None:
+            self.logger.error(f"System exit message was set to {exit_msg}")
+            self.gateway_exit_started.set()
+            raise SystemExit(exit_msg)
+
     def keep_alive(self):
         """Continuously confirms communication with SPDK process."""
         allowed_consecutive_spdk_ping_failures = self.config.getint_with_default(
@@ -806,6 +873,7 @@ class GatewayServer:
             spdk_ping_interval_in_seconds = 0.0
 
         while True:
+            self.exit_gateway_if_needed()
             if self.gateway_rpc:
                 if self.gateway_rpc.rebalance.rebalance_event.is_set():
                     self.logger.critical("Failure in rebalance, aborting")
