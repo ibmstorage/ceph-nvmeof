@@ -767,47 +767,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self.spdk_version = None
         self.spdk_qos_timeslice = self.config.getint_with_default("spdk",
                                                                   "qos_timeslice_in_usecs", None)
-        spdk_notifications_interval = self.config.getint_with_default("spdk",
-                                                                      "notifications_interval",
-                                                                      60)
-        self.spdk_notifications_thread = None
-        if spdk_notifications_interval > 0:
-            self.spdk_notifications_thread = threading.Thread(target=self.read_spdk_notifications,
-                                                              name="SPDK Notifications",
-                                                              daemon=True,
-                                                              args=(spdk_notifications_interval,))
-            self.spdk_notifications_thread.start()
-
         self.set_gateway_exit_message = set_gateway_exit_message
-
-    def read_spdk_notifications(self, read_interval):
-        if read_interval <= 0:
-            return
-
-        spdk_notification_last_id_read = -1
-
-        while self.up_and_running:
-            with self.rpc_lock:
-                notifications = rpc_notify.notify_get_notifications(
-                    self.spdk_rpc_client, id=spdk_notification_last_id_read + 1)
-            if notifications:
-                self.logger.debug(f"spdk_notifications: {notifications}")
-                for n in notifications:
-                    try:
-                        spdk_notification_last_id_read = n["id"]
-                        if n["type"] == GatewayService.SPDK_HOST_KEEPALIVE_TIMEOUT_NOTIFICATION:
-                            n_ctx = n["ctx"]
-                            (hostnqn,
-                             subsysnqn,
-                             timeout) = n_ctx.split(GatewayState.OMAP_KEY_DELIMITER)
-                            self.logger.warning(f"Host {hostnqn} was disconnected from subsystem "
-                                                f"{subsysnqn} due to keep alive timeout after "
-                                                f"{timeout} milliseconds")
-                            self.host_info.set_host_keepalive_timeout_disconnection(subsysnqn,
-                                                                                    hostnqn)
-                    except Exception:
-                        self.logger.exception(f"Invalid notification: {n}")
-            time.sleep(read_interval)
 
     def get_directories_for_key_file(self, key_type: str,
                                      subsysnqn: str, create_dir: bool = False) -> []:
@@ -1071,89 +1031,6 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                   error_message="Shutting down server")
 
         return rc
-
-    def get_image_identification(self, rbd_pool: str, rbd_image: str) -> list[ImageIdentification]:
-        image_id_metadata = None
-        if not self.ceph_utils.does_image_exist(rbd_pool, rbd_image):
-            self.logger.debug(f"Image {rbd_pool}/{rbd_image} not found")
-            return []
-        try:
-            image_id_metadata = self.ceph_utils.get_image_metadata(
-                rbd_pool, rbd_image, CephUtils.METADATA_KEY_IMAGE_ID)
-        except KeyError:
-            pass
-        except Exception:
-            self.logger.exception(f"Error getting image identification for image "
-                                  f"{rbd_pool}/{rbd_image}")
-        if not image_id_metadata:
-            return []
-
-        try:
-            img_ids_list = ImageIdentification.parse(image_id_metadata)
-        except Exception:
-            self.logger.exception(f"Error parsing {image_id_metadata}")
-            return []
-
-        self.logger.debug(f"Found image ids {ImageIdentification.list2string(img_ids_list)} "
-                          f"for {rbd_pool}/{rbd_image}")
-
-        return img_ids_list
-
-    def set_image_identification(self, rbd_pool: str, rbd_image: str, img_id: ImageIdentification):
-        assert img_id, "Can't set an empty image id"
-
-        img_id_value = ""
-        img_ids_list = self.get_image_identification(rbd_pool, rbd_image)
-        for one_id in img_ids_list:
-            if one_id.is_same_image_id(img_id):
-                self.logger.debug(f"Image id {img_id} already included in "
-                                  f"{ImageIdentification.list2string(img_ids_list)}")
-                return
-            img_id_value += f"{one_id}{ImageIdentification.DELIMITER}"
-
-        img_id_value += f"{img_id}"
-
-        try:
-            self.ceph_utils.set_image_metadata(rbd_pool, rbd_image,
-                                               CephUtils.METADATA_KEY_IMAGE_ID,
-                                               img_id_value)
-            self.logger.debug(f"set image id {img_id_value} for {rbd_pool}/{rbd_image}")
-        except Exception:
-            self.logger.exception(f"Error setting image identification {img_id_value} for "
-                                  f"{rbd_pool}{rbd_image}")
-
-    def delete_image_identification(self, rbd_pool: str,
-                                    rbd_image: str, img_id: ImageIdentification):
-        assert img_id, "Can't delete an empty image id"
-
-        img_id_value = ""
-        img_ids_list = self.get_image_identification(rbd_pool, rbd_image)
-        for one_id in img_ids_list:
-            if one_id.is_same_image_id(img_id):
-                self.logger.debug(f"Image id {img_id} was found in "
-                                  f"{ImageIdentification.list2string(img_ids_list)}")
-                continue
-            img_id_value += f"{one_id}{ImageIdentification.DELIMITER}"
-
-        img_id_value = img_id_value.removesuffix(ImageIdentification.DELIMITER)
-
-        if not img_id_value:
-            try:
-                self.ceph_utils.remove_image_metadata(rbd_pool, rbd_image,
-                                                      CephUtils.METADATA_KEY_IMAGE_ID)
-                self.logger.debug(f"remove all image ids for {rbd_pool}/{rbd_image}")
-            except Exception:
-                self.logger.exception(f"Error removing image identifications for "
-                                      f"{rbd_pool}/{rbd_image}")
-        else:
-            try:
-                self.ceph_utils.set_image_metadata(rbd_pool, rbd_image,
-                                                   CephUtils.METADATA_KEY_IMAGE_ID,
-                                                   img_id_value)
-                self.logger.debug(f"set image id {img_id_value} for {rbd_pool}/{rbd_image}")
-            except Exception:
-                self.logger.exception(f"Error setting image identification {img_id_value} for "
-                                      f"{rbd_pool}{rbd_image}")
 
     def create_bdev(self, anagrp: int, name, uuid, rbd_pool_name, rbd_image_name,
                     block_size, create_image, trash_image, rbd_image_size, disable_auto_resize,
@@ -1829,7 +1706,6 @@ class GatewayService(pb2_grpc.GatewayServicer):
                          auto_visible, rbd_pool, rbd_image_name, trash_image, read_only, context):
         """Adds a namespace to a subsystem."""
 
-        assert self.rpc_lock.locked(), "RPC is unlocked when calling create_namespace()"
         assert context is None or self.omap_lock.write_locked_by_me(), \
             f"OMAP is unlocked when calling create_namespace()\n" \
             f"in thread: {threading.get_native_id()}. Locked by: " \
@@ -2799,7 +2675,6 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def remove_namespace(self, subsystem_nqn, nsid, context):
         """Removes a namespace from a subsystem."""
 
-        assert self.rpc_lock.locked(), "RPC is unlocked when calling remove_namespace()"
         assert context is None or self.omap_lock.write_locked_by_me(), \
             f"OMAP is unlocked when calling remove_namespace()\n" \
             f"in thread: {threading.get_native_id()}. Locked by: " \

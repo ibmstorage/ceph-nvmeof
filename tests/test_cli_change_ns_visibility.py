@@ -81,15 +81,14 @@ def test_change_namespace_visibility(caplog, two_gateways):
     assert f"Adding namespace 1 to {subsystem}: Successful" in caplog.text
     caplog.clear()
     cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "1"])
-    assert '"nsid": 1,' in caplog.text
-    assert '"auto_visible": true,' in caplog.text
-    assert '"load_balancing_group": 1,' in caplog.text
+    assert '"nsid": 1' in caplog.text
+    assert '"auto_visible": true' in caplog.text
     time.sleep(15)
     caplog.clear()
     cli(["--server-port", "5502", "--format", "json", "namespace", "list",
          "--subsystem", subsystem, "--nsid", "1"])
-    assert '"nsid": 1,' in caplog.text
-    assert '"auto_visible": true,' in caplog.text
+    assert '"nsid": 1' in caplog.text
+    assert '"auto_visible": true' in caplog.text
     caplog.clear()
     cli(["namespace", "change_visibility", "--subsystem", subsystem,
          "--nsid", "1", "--auto-visible", "no"])

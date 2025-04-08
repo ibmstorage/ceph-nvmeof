@@ -453,11 +453,7 @@ class OmapLock:
             lock_kind = OmapLock.SHARED_LOCK_NAME
 
         lock_cookie = self.build_omap_lock_cookie(lock_exclusive, cookie_suffix)
-        i = 0
-        while i <= self.omap_file_lock_retries:
-            if not self.gateway_state.update_is_active_lock.locked():
-                i += 1
-
+        for i in range(0, self.omap_file_lock_retries + 1):
             try:
                 if lock_exclusive:
                     self.omap_state.ioctx.lock_exclusive(self.omap_state.omap_name,
@@ -852,15 +848,15 @@ class OmapGatewayState(GatewayState):
                         got_omap_lock = True
                         if guard.actually_locked:
                             actually_locked = True
-                            self.logger.debug(f"Locked OMAP file before reading its "
-                                              f"content ({self.id_text})")
+                            self.logger.info(f"Locked OMAP file before reading its "
+                                             f"content ({self.id_text})")
                         else:
-                            self.logger.debug(f"OMAP file is already locked, read its "
-                                              f"content ({self.id_text})")
+                            self.logger.info(f"OMAP file is already locked, read its "
+                                             f"content ({self.id_text})")
                         omap_dict, get_omap_vals_count = self.read_omap_values()
                 if actually_locked:
-                    self.logger.debug(f"Released OMAP file lock after reading "
-                                      f"content ({self.id_text})")
+                    self.logger.info(f"Released OMAP file lock after reading "
+                                     f"content ({self.id_text})")
                 if omap_dict is not None:
                     assert got_omap_lock
                     return omap_dict
@@ -1442,21 +1438,14 @@ class GatewayStateHandler:
                 only_subsystem_key_changed = []
                 for key in changed.keys():
                     if key.startswith(GatewayState.NAMESPACE_PREFIX):
-                        old_req = self._parse_namespace_req(local_state_dict[key])
-                        if old_req is None:
-                            continue
-                        new_req = self._parse_namespace_req(omap_state_dict[key])
-                        if new_req is None:
-                            continue
-                        if self.namespace_need_to_be_re_added(old_req, new_req):
-                            # a namespace field we don't know to handle has changed
-                            # need to delete and re-add the namespace
-                            continue
-                        new_lb_grp_id = self.namespace_lb_group_id_changed(old_req, new_req)
-                        if new_lb_grp_id is not None:
-                            self.logger.debug(f"Found {key} where the load balancing group id "
+                        (should_process, new_lb_grp_id) = self.namespace_only_lb_group_id_changed(
+                            local_state_dict[key],
+                            omap_state_dict[key])
+                        if should_process:
+                            assert new_lb_grp_id, "Shouldn't get here with an empty lb group id"
+                            self.logger.debug(f"Found {key} where only the load balancing group id "
                                               f"has changed. The new group id is {new_lb_grp_id}")
-                            ns_lb_group_changed.append((key, new_lb_grp_id))
+                            only_lb_group_changed.append((key, new_lb_grp_id))
 
                         new_visibility = self.namespace_visibility_changed(old_req, new_req)
                         if new_visibility is not None:

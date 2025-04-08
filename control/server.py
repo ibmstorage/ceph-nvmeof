@@ -127,6 +127,7 @@ class GatewayServer:
         self.crypto = None
         self.gateway_state = None
         self.exiting = False
+        self.is_gateway_process = True
         enc_key = None
         enc_key_file = self.config.get_with_default("gateway", "encryption_key", "")
         if enc_key_file:
@@ -162,12 +163,14 @@ class GatewayServer:
         if gw_logger:
             logger = gw_logger.logger
 
-        normalExit = False
-        if exc_type is None and exc_value is None:
-            normalExit = True
-        elif isinstance(exc_value, SystemExit) and isinstance(exc_value.code, int):
-            normalExit = exc_value.code == 0
-
+        # In case we got here because the discovery exited, do nothing
+        if not self.is_gateway_process:
+            process_name = "discovery"
+            if logger:
+                logger.info(f"Exiting the {process_name} process.")
+            return
+        else:
+            process_name = "gateway"
         if self.gateway_rpc:
             self.gateway_rpc.up_and_running = False
         if self.gateway_state:
@@ -178,14 +181,14 @@ class GatewayServer:
         if self.exiting:
             if logger:
                 logger.debug("Already exiting, do nothing")
-            return normalExit
+            return
         self.exiting = True
 
         if logger:
-            if normalExit:
-                logger.info("GatewayServer is terminating gracefully...")
+            if exc_type is not None:
+                logger.exception("GatewayServer exception occurred:\n{traceback}\n")
             else:
-                logger.exception("GatewayServer exception occurred")
+                logger.info("GatewayServer is terminating gracefully...")
 
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         if self.monitor_client_process:
@@ -231,12 +234,10 @@ class GatewayServer:
             self.omap_state = None
 
         if logger:
-            logger.info("Exiting the gateway process.")
+            logger.info(f"Exiting the {process_name} process.")
 
         if gw_logger and gw_name:
             gw_logger.compress_final_log_file(gw_name)
-
-        return normalExit
 
     def set_group_id(self, id: int):
         self.logger.info(f"Gateway {self.name} group {id=}")
@@ -279,9 +280,6 @@ class GatewayServer:
                                       f"gateway-{self.name}")
         self.omap_state = omap_state
         local_state = LocalGatewayState()
-
-        # Accel config
-        self._accel_config()
 
         # install SIGCHLD handler
         signal.signal(signal.SIGCHLD, sigchld_handler)
@@ -440,16 +438,28 @@ class GatewayServer:
         self.discovery_pid = os.fork()
         if self.discovery_pid == 0:
             self.logger.info("Starting ceph nvmeof discovery service")
-            # disable inherited from gateway signal handlers
+            # Reset server related fields for the discovery process
+            self.is_gateway_process = False
+            self.spdk_process = None
+            self.monitor_client_process = None
+            self.spdk_log_file = None
+            self.spdk_log_file_path = None
+            self.monitor_client_log_file = None
+            self.monitor_client_log_file_path = None
+            self.omap_state = None
+            self.name = None
             signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
-            try:
-                with DiscoveryService(self.config) as discovery:
-                    discovery.start_service()
-            except Exception:
-                self.logger.exception("Exception occurred while running the discovery service")
-            finally:
-                os._exit(0)
+            if self.server:
+                self.server.stop(None)
+                self.server = None
+            if self.gateway_rpc:
+                self.gateway_rpc.up_and_running = False
+                self.gateway_rpc = None
+            self.gateway_state = None
+            self.omap_lock = None
+            with DiscoveryService(self.config) as discovery:
+                discovery.start_service()
+            os._exit(0)
         else:
             self.logger.info(f"Discovery service process id: {self.discovery_pid}")
 
@@ -800,8 +810,13 @@ class GatewayServer:
         assert self.discovery_pid is not None             # should be verified by the caller
 
         self.logger.info("Terminating discovery service...")
-        if self._terminate_discovery(self.discovery_pid):
-            self.logger.info("Discovery service terminated")
+        # discovery service selector loop should exit due to KeyboardInterrupt exception
+        try:
+            os.kill(self.discovery_pid, signal.SIGINT)
+            os.waitpid(self.discovery_pid, os.WNOHANG)
+        except (ChildProcessError, ProcessLookupError):
+            pass          # ignore
+        self.logger.info("Discovery service terminated")
 
         self.discovery_pid = None
 
