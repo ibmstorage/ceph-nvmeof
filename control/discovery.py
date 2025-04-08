@@ -10,7 +10,7 @@
 import argparse
 import json
 from .config import GatewayConfig
-from .state import GatewayState, LocalGatewayState, OmapGatewayState, GatewayStateHandler
+from .state import GatewayState, LocalGatewayState, OmapLock, OmapGatewayState, GatewayStateHandler
 from .utils import GatewayLogger
 from .utils import GatewayUtilsCrypto
 
@@ -327,7 +327,11 @@ class DiscoveryService:
         self.version = 1
         self.config = config
         self.lock = threading.Lock()
-        self.omap_state = OmapGatewayState(self.config, f"discovery-{socket.gethostname()}")
+        self.abort_on_error = self.config.getboolean_with_default("discovery",
+                                                                  "abort_on_errors",
+                                                                  True)
+        self.omap_state = OmapGatewayState(self.config, None, f"discovery-{socket.gethostname()}")
+        self.omap_state.abort_on_error = self.abort_on_error
 
         self.gw_logger_object = GatewayLogger(config)
         self.logger = self.gw_logger_object.logger
@@ -344,6 +348,7 @@ class DiscoveryService:
             assert 0
         self.logger.info(f"discovery addr: {self.discovery_addr} port: {self.discovery_port}")
 
+        self.omap_lock = None
         self.sock = None
         self.conn_vals = {}
         self.connection_counter = 1
@@ -354,7 +359,7 @@ class DiscoveryService:
 
     def __exit__(self, exc_type, exc_value, traceback):
         if self.omap_state:
-            self.omap_state.cleanup_omap()
+            self.omap_state.cleanup_omap(self.omap_lock)
             self.omap_state = None
 
         if self.selector:
@@ -390,8 +395,14 @@ class DiscoveryService:
     def _read_all(self) -> Dict[str, str]:
         """Reads OMAP and returns dict of all keys and values."""
 
-        omap_dict = self.omap_state.get_state()
-        return omap_dict
+        try:
+            omap_dict = self.omap_state.get_state()
+            return omap_dict
+        except Exception:
+            self.logger.exception("Failure getting OMAP state for discovery")
+            if self.abort_on_error:
+                raise
+        return {}
 
     def _get_vals(self, omap_dict, prefix):
         """Read values from the OMAP dict."""
@@ -1158,6 +1169,7 @@ class DiscoveryService:
                                             self.omap_state,
                                             self._state_notify_update,
                                             dummy_crypto, f"discovery-{socket.gethostname()}")
+        self.omap_lock = OmapLock(gateway_state, None)
         gateway_state.start_update()
 
         try:
