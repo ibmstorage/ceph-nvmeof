@@ -11,12 +11,12 @@ import threading
 import time
 from .proto import gateway_pb2 as pb2
 
-MIN_LOAD = 2000
-
 
 class Rebalance:
     """Miscellaneous functions which do rebalance of ANA groups
     """
+
+    INVALID_LOAD_BALANCING_GROUP = 18446744073709551616    # should be bigger than any valid NSID
 
     def __init__(self, gateway_service):
         self.logger = gateway_service.logger
@@ -56,7 +56,7 @@ class Rebalance:
             time.sleep(self.rebalance_period_sec)
 
     def find_min_loaded_group(self, grp_list) -> int:
-        min_load = MIN_LOAD
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         chosen_ana_group = 0
         chosen_nqn = "null"
         for ana_grp in self.gw_srv.ana_grp_ns_load:
@@ -66,7 +66,7 @@ class Rebalance:
                 if self.gw_srv.ana_grp_ns_load[ana_grp] <= min_load:
                     min_load = self.gw_srv.ana_grp_ns_load[ana_grp]
                     chosen_ana_group = ana_grp
-        min_load = MIN_LOAD
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         self.logger.debug(f"chosen ana-group {chosen_ana_group}")
         if chosen_ana_group != 0:
             for nqn in self.gw_srv.ana_grp_subs_load[chosen_ana_group]:
@@ -78,7 +78,7 @@ class Rebalance:
         return chosen_ana_group, chosen_nqn
 
     def find_min_loaded_group_in_subsys(self, nqn, grp_list) -> int:
-        min_load = MIN_LOAD
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         chosen_ana_group = 0
         for ana_grp in grp_list:
             if self.gw_srv.ana_grp_ns_load[ana_grp] == 0:

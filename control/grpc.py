@@ -547,7 +547,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     DHCHAP_CONTROLLER_PREFIX = "dhchap_ctrlr"
     KEYS_DIR = "/var/tmp"
     MAX_SUBSYSTEMS_DEFAULT = 128
-    MAX_NAMESPACES_DEFAULT = 1024
+    MAX_NAMESPACES_DEFAULT = 2048
     MAX_NAMESPACES_PER_SUBSYSTEM_DEFAULT = 256
     MAX_HOSTS_PER_SUBSYS_DEFAULT = 128
     MAX_HOSTS_DEFAULT = 2048
@@ -1271,6 +1271,14 @@ class GatewayService(pb2_grpc.GatewayServicer):
             if not request.max_namespaces:
                 request.max_namespaces = self.max_namespaces_per_subsystem
 
+            if request.max_namespaces >= Rebalance.INVALID_LOAD_BALANCING_GROUP:
+                errmsg = f"{create_subsystem_error_prefix}: Maximal number of namespaces " \
+                         f"({request.max_namespaces}) is too big"
+                self.logger.error(errmsg)
+                return pb2.subsys_status(status=errno.E2BIG,
+                                         error_message=errmsg,
+                                         nqn=request.subsystem_nqn)
+
             if not request.serial_number:
                 random.seed()
                 randser = random.randint(2, 99999999999999)
@@ -1782,7 +1790,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 # still no namespaces in this ana-group - probably the new GW  added
                 self.logger.info(f"New GW created: chosen ana group {ana_grp} for ns {nsid} ")
                 return ana_grp
-        min_load = 2000
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         chosen_ana_group = 0
         for ana_grp in self.ana_grp_ns_load:
             if ana_grp in grps_list:
