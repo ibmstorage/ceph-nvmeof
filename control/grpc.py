@@ -1925,6 +1925,28 @@ class GatewayService(pb2_grpc.GatewayServicer):
                         return pb2.req_status()
         return pb2.req_status(status=True)
 
+    def choose_anagrpid_for_namespace(self, nsid) -> int:
+        grps_list = self.ceph_utils.get_number_created_gateways(self.gateway_pool,
+                                                                self.gateway_group)
+        for ana_grp in grps_list:
+            if self.ana_grp_ns_load[ana_grp] == 0:
+                # still no namespaces in this ana-group - probably the new GW  added
+                self.logger.info(f"New GW created: chosen ana group {ana_grp} for ns {nsid} ")
+                return ana_grp
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
+        chosen_ana_group = 0
+        for ana_grp in self.ana_grp_ns_load:
+            if ana_grp in grps_list:
+                self.logger.info(f" ana group {ana_grp} load = {self.ana_grp_ns_load[ana_grp]}  ")
+                if self.ana_grp_ns_load[ana_grp] <= min_load:
+                    min_load = self.ana_grp_ns_load[ana_grp]
+                    chosen_ana_group = ana_grp
+                    self.logger.info(f" ana group {ana_grp} load = {self.ana_grp_ns_load[ana_grp]}"
+                                     f" set as min {min_load} ")
+        self.logger.info(f"Found min loaded cluster: chosen ana group {chosen_ana_group} "
+                         f"for ID {nsid}")
+        return chosen_ana_group
+
     def namespace_add_safe(self, request, context):
         """Adds a namespace to a subsystem."""
 
