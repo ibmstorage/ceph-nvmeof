@@ -81,7 +81,7 @@ if [ "$NIGHTLY" != "nightly" ]; then
         --gw-scale-down-num=1 \
         --subsystem-num=2 \
         --ns-num=4 \
-        --subsystem-max-ns-num=1024 \
+        --subsystem-max-ns-num=2048 \
         --failover-num=2 \
         --failover-num-after-upgrade=2 \
         --rbd-size=200M \
@@ -124,7 +124,7 @@ else
         --gw-scale-down-num=1 \
         --subsystem-num=4 \
         --ns-num=230 \
-        --subsystem-max-ns-num=1024 \
+        --subsystem-max-ns-num=2048 \
         --failover-num=10 \
         --failover-num-after-upgrade=2 \
         --rbd-size=200M \
