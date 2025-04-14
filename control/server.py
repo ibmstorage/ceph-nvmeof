@@ -161,12 +161,18 @@ class GatewayServer:
         if gw_logger:
             logger = gw_logger.logger
 
+        normalExit = False
+        if exc_type is None and exc_value is None:
+            normalExit = True
+        elif isinstance(exc_value, SystemExit) and isinstance(exc_value.code, int):
+            normalExit = exc_value.code == 0
+
         # In case we got here because the discovery exited, do nothing
         if not self.is_gateway_process:
             process_name = "discovery"
             if logger:
                 logger.info(f"Exiting the {process_name} process.")
-            return
+            return normalExit
         else:
             process_name = "gateway"
         if self.gateway_rpc:
@@ -179,14 +185,14 @@ class GatewayServer:
         if self.exiting:
             if logger:
                 logger.debug("Already exiting, do nothing")
-            return
+            return normalExit
         self.exiting = True
 
         if logger:
-            if exc_type is not None:
-                logger.exception("GatewayServer exception occurred:\n{traceback}\n")
-            else:
+            if normalExit:
                 logger.info("GatewayServer is terminating gracefully...")
+            else:
+                logger.exception("GatewayServer exception occurred")
 
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         if self.monitor_client_process:
@@ -236,6 +242,8 @@ class GatewayServer:
 
         if gw_logger and gw_name:
             gw_logger.compress_final_log_file(gw_name)
+
+        return normalExit
 
     def set_group_id(self, id: int):
         self.logger.info(f"Gateway {self.name} group {id=}")
