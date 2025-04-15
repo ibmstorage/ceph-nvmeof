@@ -1313,6 +1313,11 @@ class TestCreate:
         assert f'"trsvcid": {listener_ipv6[3]}' in caplog.text
         assert '"adrfam": "ipv6"' in caplog.text
 
+    def test_list_listeners_bad_subsys(self, caplog, gateway):
+        caplog.clear()
+        cli(["listener", "list", "--subsystem", "junk"])
+        assert 'Failure listing listeners: No such subsystem "junk"' in caplog.text
+
     @pytest.mark.parametrize("listener", listener_list_negative_port)
     def test_create_listener_negative_port(self, caplog, listener, gateway):
         caplog.clear()
