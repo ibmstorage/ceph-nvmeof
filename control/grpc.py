@@ -2740,7 +2740,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         peer_msg = self.get_peer_message(context)
         limits_to_set = self.get_qos_limits_string(request)
         self.logger.info(f"Received request to set QOS limits for namespace {request.nsid} "
-                         f"on {request.subsystem_nqn},{limits_to_set}, "
+                         f"on {request.subsystem_nqn},{limits_to_set}, force: {request.force}, "
                          f"context: {context}{peer_msg}")
 
         if not request.nsid:
@@ -2771,6 +2771,24 @@ class GatewayService(pb2_grpc.GatewayServicer):
             errmsg = f"{failure_prefix}: Can't find associated block device"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+
+        try:
+            if self.ceph_utils.were_image_qos_limits_changed(find_ret.pool, find_ret.image):
+                if request.force:
+                    self.logger.warning(f"The QOS limits for image "
+                                        f"{find_ret.pool}/{find_ret.image} were changed, will "
+                                        f"continue as the \"--force\" parameter was used")
+                else:
+                    errmsg = f"{failure_prefix}: QOS limits were changed for RBD image " \
+                             f"{find_ret.pool}/{find_ret.image}, use the \"--force\" parameter " \
+                             f"to set limits anyway"
+                    self.logger.error(errmsg)
+                    return pb2.req_status(status=errno.EEXIST, error_message=errmsg)
+        except Exception:
+            self.logger.warning(f"Error trying to get the config attributes of image "
+                                f"{find_ret.pool}/{find_ret.image}, can't check "
+                                f"for QOS changes")
+            pass
 
         if request.HasField("rw_ios_per_second"):
             if request.rw_ios_per_second % 1000 != 0:

@@ -2303,6 +2303,8 @@ class GatewayClient:
             qos_args["r_mbytes_per_second"] = args.r_megabytes_per_second
         if args.w_megabytes_per_second is not None:
             qos_args["w_mbytes_per_second"] = args.w_megabytes_per_second
+        if args.force:
+            qos_args["force"] = args.force
         try:
             set_qos_req = pb2.namespace_set_qos_req(**qos_args)
             ret = self.stub.namespace_set_qos_limits(set_qos_req)
@@ -2650,6 +2652,10 @@ class GatewayClient:
         argument("--w-megabytes-per-second",
                  help="Write megabytes per second limit, 0 means unlimited",
                  type=int),
+        argument("--force",
+                 help="Set QOS limits even if they were changed by RBD",
+                 action='store_true',
+                 required=False),
     ]
     ns_add_host_args_list = ns_common_args + [
         argument("--nsid", help="Namespace ID", type=int, required=True),
