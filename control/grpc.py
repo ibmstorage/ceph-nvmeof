@@ -2148,10 +2148,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
 
         # If this is not set the subsystem was not created yet
-        if request.subsystem_nqn not in self.subsys_max_ns:
+        if request.subsystem_nqn not in self.subsys_serial:
             errmsg = f"{failure_prefix}: Can't find subsystem"
             self.logger.error(errmsg)
-            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
             request.subsystem_nqn, request.nsid)
@@ -3041,10 +3041,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
         # If this is not set the subsystem was not created yet
-        if request.subsystem_nqn not in self.subsys_max_ns:
+        if request.subsystem_nqn not in self.subsys_serial:
             errmsg = f"{failure_prefix}: Can't find subsystem"
             self.logger.error(errmsg)
-            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         if request.host_nqn == "*":
             errmsg = f"{failure_prefix}: Host NQN can't be \"*\""
@@ -3158,10 +3158,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
         # If this is not set the subsystem was not created yet
-        if request.subsystem_nqn not in self.subsys_max_ns:
+        if request.subsystem_nqn not in self.subsys_serial:
             errmsg = f"{failure_prefix}: Can't find subsystem"
             self.logger.error(errmsg)
-            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         if request.host_nqn == "*":
             errmsg = f"{failure_prefix}: Host NQN can't be \"*\""
@@ -4575,6 +4575,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to list listeners for {request.subsystem}, "
                          f"context: {context}{peer_msg}")
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem not in self.subsys_serial:
+            errmsg = f"Failure listing listeners: No such subsystem \"{request.subsystem}\""
+            self.logger.error(errmsg)
+            return pb2.listeners_info(status=errno.ENOENT, error_message=errmsg, listeners=[])
 
         listeners = []
         omap_lock = self.omap_lock.get_omap_lock_to_use(context)
