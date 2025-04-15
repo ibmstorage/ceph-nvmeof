@@ -819,13 +819,8 @@ class GatewayServer:
         assert self.discovery_pid is not None             # should be verified by the caller
 
         self.logger.info("Terminating discovery service...")
-        # discovery service selector loop should exit due to KeyboardInterrupt exception
-        try:
-            os.kill(self.discovery_pid, signal.SIGINT)
-            os.waitpid(self.discovery_pid, os.WNOHANG)
-        except (ChildProcessError, ProcessLookupError):
-            pass          # ignore
-        self.logger.info("Discovery service terminated")
+        if self._terminate_discovery(self.discovery_pid):
+            self.logger.info("Discovery service terminated")
 
         self.discovery_pid = None
 
