@@ -2285,13 +2285,20 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if not request.nsid:
             errmsg = "Failure setting RBD trash image flag for namespace, missing ID"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
         if not request.subsystem_nqn:
             errmsg = f"Failure setting RBD trash image flag for namespace {request.nsid}, " \
                      f"missing subsystem NQN"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"Failure setting RBD trash image flag for namespace {request.nsid}, " \
+                     f"can't find subsystem \"{request.subsystem_nqn}\""
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
             request.subsystem_nqn, request.nsid)
@@ -2611,6 +2618,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
             self.logger.error(errmsg)
             return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
 
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"Failure getting IO stats for namespace {request.nsid}, can't find " \
+                     f"subsystem \"{request.subsystem_nqn}\""
+            self.logger.error(errmsg)
+            return pb2.namespace_io_stats_info(status=errno.ENOENT, error_message=errmsg)
+
         with self.rpc_lock:
             find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
                 request.subsystem_nqn, request.nsid)
@@ -2732,13 +2746,19 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if not request.nsid:
             errmsg = "Failure setting QOS limits for namespace, missing ID"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
         if not request.subsystem_nqn:
             errmsg = f"Failure setting QOS limits for namespace {request.nsid}, " \
                      f"missing subsystem NQN"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"{failure_prefix}: Can't find subsystem"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
             request.subsystem_nqn, request.nsid)
@@ -2885,6 +2905,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"{failure_prefix}: Can't find subsystem"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
+
         if request.new_size <= 0:
             errmsg = f"{failure_prefix}: New size must be positive"
             self.logger.error(errmsg)
@@ -2943,6 +2969,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
             errmsg = f"Failure deleting namespace {request.nsid}, missing subsystem NQN"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"Failure deleting namespace {request.nsid}, can't find subsystem " \
+                     f"\"{request.subsystem_nqn}\""
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         peer_msg = self.get_peer_message(context)
         i_am_sure_msg = "I am sure, " if request.i_am_sure else ""
@@ -3078,7 +3111,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if find_ret.empty():
             errmsg = f"{failure_prefix}: Can't find namespace"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
 
         if find_ret.auto_visible:
             errmsg = f"{failure_prefix}: Namespace is visible to all hosts"
@@ -3195,7 +3228,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if find_ret.empty():
             errmsg = f"{failure_prefix}: Can't find namespace"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
 
         if find_ret.auto_visible:
             errmsg = f"{failure_prefix}: Namespace is visible to all hosts"

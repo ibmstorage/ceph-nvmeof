@@ -948,6 +948,9 @@ class TestCreate:
         assert '"rbd_image_size": "16777216"' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
         caplog.clear()
+        cli(["namespace", "resize", "--subsystem", "junk", "--nsid", "6", "--size", "2MB"])
+        assert "Failure resizing namespace 6 on junk: Can't find subsystem" in caplog.text
+        caplog.clear()
         cli(["namespace", "resize", "--subsystem", subsystem, "--nsid", "6", "--size", "2MB"])
         assert "new size 2097152 bytes is smaller than current size 16777216 bytes" in caplog.text
         caplog.clear()
@@ -1123,6 +1126,11 @@ class TestCreate:
         assert '"r_mbytes_per_second": "0"' in caplog.text
         assert '"w_mbytes_per_second": "0"' in caplog.text
         caplog.clear()
+        cli(["namespace", "set_qos", "--subsystem", "junk", "--nsid", "6",
+             "--rw-ios-per-second", "2000"])
+        assert "Failure setting QOS limits for namespace 6 on junk: " \
+               "Can't find subsystem" in caplog.text
+        caplog.clear()
         cli(["namespace", "set_qos", "--subsystem", subsystem, "--nsid", "6",
              "--rw-ios-per-second", "2000"])
         assert f"Setting QOS limits of namespace 6 in {subsystem}: Successful" in caplog.text
@@ -1184,6 +1192,10 @@ class TestCreate:
         assert rc == 2
 
     def test_namespace_io_stats(self, caplog, gateway):
+        caplog.clear()
+        cli(["namespace", "get_io_stats", "--subsystem", "junk", "--nsid", "6"])
+        assert "Failure getting IO stats for namespace 6, can't find " \
+               "subsystem \"junk\"" in caplog.text
         caplog.clear()
         cli(["namespace", "get_io_stats", "--subsystem", subsystem, "--nsid", "6"])
         assert f'IO statistics for namespace 6 in {subsystem}' in caplog.text
@@ -1393,6 +1405,9 @@ class TestCreate:
         caplog.clear()
         cli(["subsystem", "add", "--subsystem", subsystem9, "--no-group-append"])
         assert f"Adding subsystem {subsystem9}: Successful" in caplog.text
+        caplog.clear()
+        cli(["namespace", "del", "--subsystem", "junk", "--nsid", "10"])
+        assert "Failure deleting namespace 10, can't find subsystem \"junk\"" in caplog.text
         caplog.clear()
         cli(["namespace", "del", "--subsystem", subsystem, "--nsid", "10"])
         assert f"Deleting namespace 10 from {subsystem}: Successful" in caplog.text
