@@ -18,6 +18,9 @@ class CephUtils:
     """Miscellaneous functions which connect to Ceph
     """
 
+    RBD_QOS_PREFIX = "rbd_qos_"
+    RBD_QOS_SUFFIX = "_limit"
+
     def __init__(self, config):
         self.logger = GatewayLogger(config).logger
         self.ceph_conf = config.get_with_default("ceph", "config_file", "/etc/ceph/ceph.conf")
@@ -220,7 +223,6 @@ class CephUtils:
 
         with rados.Rados(conffile=self.ceph_conf, rados_id=self.rados_id) as cluster:
             with cluster.open_ioctx(pool_name) as ioctx:
-                rbd.RBD()
                 try:
                     with rbd.Image(ioctx, image_name) as img:
                         image_size = img.size()
@@ -233,6 +235,41 @@ class CephUtils:
                     raise ex
 
         return image_size
+
+    def were_image_qos_limits_changed(self, pool_name: str, image_name: str) -> bool:
+        if not self.pool_exists(pool_name):
+            raise rbd.ImageNotFound(f"Pool {pool_name} doesn't exist", errno=errno.ENODEV)
+
+        with rados.Rados(conffile=self.ceph_conf, rados_id=self.rados_id) as cluster:
+            with cluster.open_ioctx(pool_name) as ioctx:
+                try:
+                    with rbd.Image(ioctx, image_name) as img:
+                        attributes = img.config_list()
+                        self.logger.debug(f"Config for image {pool_name}/{image_name}:")
+                        self.logger.debug("==========================================")
+                        for one_img_attr in attributes:
+                            self.logger.debug(f"{one_img_attr}")
+                            try:
+                                if not one_img_attr["name"].startswith(CephUtils.RBD_QOS_PREFIX):
+                                    continue
+                                if not one_img_attr["name"].endswith(CephUtils.RBD_QOS_SUFFIX):
+                                    continue
+                                if one_img_attr["value"] != "0":
+                                    self.logger.warning(f'RBD QOS attribute '
+                                                        f'{one_img_attr["name"]} was changed '
+                                                        f'to {one_img_attr["value"]}')
+                                    return True
+                            except Exception:
+                                self.logger.exception(f"error parsing {one_img_attr}")
+                except rbd.ImageNotFound:
+                    raise rbd.ImageNotFound(f"Image {pool_name}/{image_name} doesn't exist",
+                                            errno=errno.ENODEV)
+                except Exception:
+                    self.logger.exception(f"Error while trying to get the config of image "
+                                          f"{pool_name}/{image_name}")
+                    raise
+
+        return False
 
     def does_image_exist(self, pool_name: str, image_name: str) -> bool:
         try:

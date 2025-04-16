@@ -168,6 +168,7 @@ message namespace_set_qos_req {
 	optional uint64 rw_mbytes_per_second = 5;
 	optional uint64 r_mbytes_per_second = 6;
 	optional uint64 w_mbytes_per_second = 7;
+	optional bool force = 8;
 }
 
 message namespace_change_load_balancing_group_req {
