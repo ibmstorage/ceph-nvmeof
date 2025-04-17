@@ -2028,12 +2028,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     anagrp = ns_entry["anagrpid"]
                     gw_id = self.ceph_utils.get_gw_id_owner_ana_group(
                         self.gateway_pool, self.gateway_group, anagrp)
-                    self.logger.debug(f"ANA group of ns#{request.nsid} - {anagrp} is owned by "
-                                      f"gateway {gw_id}, self.name is {self.gateway_name}")
-                    if self.gateway_name != gw_id:
-                        errmsg = f"ANA group of ns#{request.nsid} - {anagrp} is owned by " \
-                                 f"gateway {gw_id} so try this command from it, this gateway " \
-                                 f"name is {self.gateway_name}"
+                    self.logger.debug(f"Load balancing group of ns#{request.nsid} - {anagrp} is "
+                                      f"owned by gateway {gw_id}, self.name is {self.gateway_name}")
+                    if gw_id is not None and self.gateway_name != gw_id:
+                        errmsg = f"Load balancing group of ns#{request.nsid} - {anagrp} is " \
+                                 f"owned by gateway {gw_id}, try running the command from " \
+                                 f"there.\nThis gateway name is {self.gateway_name}"
                         self.logger.error(errmsg)
                         return pb2.req_status(status=errno.EEXIST, error_message=errmsg)
 
