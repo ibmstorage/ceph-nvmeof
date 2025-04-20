@@ -4096,65 +4096,80 @@ class GatewayService(pb2_grpc.GatewayServicer):
         peer_msg = self.get_peer_message(context)
         log_level = logging.INFO if context else logging.DEBUG
         self.logger.log(log_level,
-                        f"Received request to list connections for {request.subsystem},"
-                        f" context: {context}{peer_msg}")
+                        f"Received request to list connections for {request.subsystem}, "
+                        f"context: {context}{peer_msg}")
 
         if not request.subsystem:
-            errmsg = "Failure listing connections, missing subsystem NQN"
-            self.logger.error(errmsg)
-            return pb2.connections_info(status=errno.EINVAL, error_message=errmsg, connections=[])
+            request.subsystem = GatewayUtils.ALL_SUBSYSTEMS
 
+        if request.subsystem != GatewayUtils.ALL_SUBSYSTEMS:
+            return self.list_connection_for_one_subsystem(request.subsystem)
+
+        subsystems = list(self.subsys_serial.keys())
+        connections = []
+        for subsys in subsystems:
+            connections_info = self.list_connection_for_one_subsystem(subsys)
+            if connections_info.status != 0:
+                self.logger.warning(f"Failed listing connections for {subsys}, "
+                                    f"will continue with the other subsystems")
+            connections += connections_info.connections
+
+        return pb2.connections_info(status=0, error_message=os.strerror(0),
+                                    subsystem_nqn=GatewayUtils.ALL_SUBSYSTEMS,
+                                    connections=connections)
+
+    def list_connection_for_one_subsystem(self, subsystem):
         try:
-            qpair_ret = rpc_nvmf.nvmf_subsystem_get_qpairs(self.spdk_rpc_client,
-                                                           nqn=request.subsystem)
+            qpair_ret = rpc_nvmf.nvmf_subsystem_get_qpairs(self.spdk_rpc_client, nqn=subsystem)
             self.logger.debug(f"list_connections get_qpairs: {qpair_ret}")
         except Exception as ex:
-            errmsg = "Failure listing connections, can't get qpairs"
+            errmsg = f"Failure listing connections for {subsystem}, can't get qpairs"
             self.logger.exception(errmsg)
             errmsg = f"{errmsg}:\n{ex}"
             resp = self.parse_json_exeption(ex)
             status = errno.EINVAL
             if resp:
                 status = resp["code"]
-                errmsg = f"Failure listing connections, can't get qpairs: {resp['message']}"
+                errmsg = f"Failure listing connections for {subsystem}, " \
+                         f"can't get qpairs: {resp['message']}"
             return pb2.connections_info(status=status, error_message=errmsg, connections=[])
 
         try:
-            ctrl_ret = rpc_nvmf.nvmf_subsystem_get_controllers(self.spdk_rpc_client,
-                                                               nqn=request.subsystem)
+            ctrl_ret = rpc_nvmf.nvmf_subsystem_get_controllers(self.spdk_rpc_client, nqn=subsystem)
             self.logger.debug(f"list_connections get_controllers: {ctrl_ret}")
         except Exception as ex:
-            errmsg = "Failure listing connections, can't get controllers"
+            errmsg = f"Failure listing connections for {subsystem}, can't get controllers"
             self.logger.exception(errmsg)
             errmsg = f"{errmsg}:\n{ex}"
             resp = self.parse_json_exeption(ex)
             status = errno.EINVAL
             if resp:
                 status = resp["code"]
-                errmsg = f"Failure listing connections, can't get controllers: {resp['message']}"
+                errmsg = f"Failure listing connections for {subsystem}, " \
+                         f"can't get controllers: {resp['message']}"
             return pb2.connections_info(status=status, error_message=errmsg, connections=[])
 
         try:
-            subsys_ret = rpc_nvmf.nvmf_get_subsystems(self.spdk_rpc_client, nqn=request.subsystem)
+            subsys_ret = rpc_nvmf.nvmf_get_subsystems(self.spdk_rpc_client, nqn=subsystem)
             self.logger.debug(f"list_connections subsystems: {subsys_ret}")
         except Exception as ex:
-            errmsg = "Failure listing connections, can't get subsystems"
+            errmsg = f"Failure listing connections for {subsystem}, can't get subsystems"
             self.logger.exception(errmsg)
             errmsg = f"{errmsg}:\n{ex}"
             resp = self.parse_json_exeption(ex)
             status = errno.EINVAL
             if resp:
                 status = resp["code"]
-                errmsg = f"Failure listing connections, can't get subsystems: {resp['message']}"
+                errmsg = f"Failure listing connections for {subsystem}, " \
+                         f"can't get subsystems: {resp['message']}"
             return pb2.connections_info(status=status, error_message=errmsg, connections=[])
 
         connections = []
         host_nqns = []
         for s in subsys_ret:
             try:
-                if s["nqn"] != request.subsystem:
-                    self.logger.warning(f'Got subsystem {s["nqn"]} instead of '
-                                        f'{request.subsystem}, ignore')
+                if s["nqn"] != subsystem:
+                    self.logger.warning(f'Got subsystem {s["nqn"]} instead of {subsystem}, ignore')
                     continue
                 try:
                     subsys_hosts = s["hosts"]
@@ -4215,12 +4230,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     self.logger.debug(f"Can't find active qpair for connection {conn}")
                     continue
 
-                psk = self.host_info.is_psk_host(request.subsystem, hostnqn)
-                dhchap = self.host_info.is_dhchap_host(request.subsystem, hostnqn)
+                psk = self.host_info.is_psk_host(subsystem, hostnqn)
+                dhchap = self.host_info.is_dhchap_host(subsystem, hostnqn)
 
-                if request.subsystem in self.subsystem_listeners:
+                if subsystem in self.subsystem_listeners:
                     lstnr = (adrfam, traddr, trsvcid, True)
-                    if lstnr in self.subsystem_listeners[request.subsystem]:
+                    if lstnr in self.subsystem_listeners[subsystem]:
                         secure = True
 
                 if not trtype:
@@ -4232,7 +4247,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                           trtype=trtype, adrfam=adrfam,
                                           qpairs_count=conn["num_io_qpairs"],
                                           controller_id=conn["cntlid"],
-                                          secure=secure, use_psk=psk, use_dhchap=dhchap)
+                                          secure=secure, use_psk=psk, use_dhchap=dhchap,
+                                          subsystem=subsystem)
                 connections.append(one_conn)
                 if hostnqn in host_nqns:
                     host_nqns.remove(hostnqn)
@@ -4243,15 +4259,15 @@ class GatewayService(pb2_grpc.GatewayServicer):
         for nqn in host_nqns:
             psk = False
             dhchap = False
-            psk = self.host_info.is_psk_host(request.subsystem, nqn)
-            dhchap = self.host_info.is_dhchap_host(request.subsystem, nqn)
+            psk = self.host_info.is_psk_host(subsystem, nqn)
+            dhchap = self.host_info.is_dhchap_host(subsystem, nqn)
             one_conn = pb2.connection(nqn=nqn, connected=False, traddr="<n/a>", trsvcid=0,
                                       qpairs_count=-1, controller_id=-1,
-                                      use_psk=psk, use_dhchap=dhchap)
+                                      use_psk=psk, use_dhchap=dhchap, subsystem=subsystem)
             connections.append(one_conn)
 
         return pb2.connections_info(status=0, error_message=os.strerror(0),
-                                    subsystem_nqn=request.subsystem, connections=connections)
+                                    subsystem_nqn=subsystem, connections=connections)
 
     def list_connections(self, request, context=None):
         return self.execute_grpc_function(self.list_connections_safe, request, context)
@@ -4283,11 +4299,22 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
         traddr = GatewayUtils.unescape_address(request.traddr)
 
+        if not request.nqn:
+            errmsg = f"{create_listener_error_prefix}: missing subsystem NQN"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
         if GatewayUtils.is_discovery_nqn(request.nqn):
             errmsg = f"{create_listener_error_prefix}: Can't create a " \
                      f"listener for a discovery subsystem"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.nqn not in self.subsys_serial:
+            errmsg = f"{create_listener_error_prefix}: can't find subsystem {request.nqn}"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         if not GatewayState.is_key_element_valid(request.host_name):
             errmsg = f"{create_listener_error_prefix}: Host name " \
