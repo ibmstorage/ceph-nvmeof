@@ -1666,6 +1666,8 @@ class GatewayClient:
 
         out_func, err_func, _ = self.get_output_functions(args)
         connections_info = None
+        if not args.subsystem:
+            args.subsystem = GatewayUtils.ALL_SUBSYSTEMS
         try:
             list_req = pb2.list_connections_req(subsystem=args.subsystem)
             connections_info = self.stub.list_connections(list_req)
@@ -1686,32 +1688,45 @@ class GatewayClient:
                     conn_addr = "<n/a>"
                     if conn.connected:
                         conn_addr = f"{conn.traddr}:{conn.trsvcid}"
-                    connections_list.append([conn.nqn,
-                                             conn_addr,
-                                             "Yes" if conn.connected else "No",
-                                             conn.qpairs_count if conn.connected else "<n/a>",
-                                             conn.controller_id if conn.connected else "<n/a>",
-                                             conn_secure,
-                                             conn_psk,
-                                             conn_dhchap])
+                    subsys_col = []
+                    if connections_info.subsystem_nqn == GatewayUtils.ALL_SUBSYSTEMS:
+                        subsys_col = [conn.subsystem]
+                    qp_text = conn.qpairs_count if conn.connected else "<n/a>"
+                    ctrl_text = conn.controller_id if conn.connected else "<n/a>"
+                    connections_list.append(subsys_col + [conn.nqn,
+                                                          conn_addr,
+                                                          "Yes" if conn.connected else "No",
+                                                          qp_text,
+                                                          ctrl_text,
+                                                          conn_secure,
+                                                          conn_psk,
+                                                          conn_dhchap])
+                subsys_text = connections_info.subsystem_nqn
                 if len(connections_list) > 0:
                     if args.format == "text":
                         table_format = "fancy_grid"
                     else:
                         table_format = "plain"
+                    subsys_col = []
+                    if connections_info.subsystem_nqn == GatewayUtils.ALL_SUBSYSTEMS:
+                        subsys_col = ["Subsystem"]
                     connections_out = tabulate(connections_list,
-                                               headers=["Host NQN",
-                                                        "Address",
-                                                        "Connected",
-                                                        "QPairs Count",
-                                                        "Controller ID",
-                                                        "Secure",
-                                                        "Uses\nPSK",
-                                                        "Uses\nDHCHAP"],
+                                               headers=subsys_col + ["Host NQN",
+                                                                     "Address",
+                                                                     "Connected",
+                                                                     "QPairs Count",
+                                                                     "Controller ID",
+                                                                     "Secure",
+                                                                     "Uses\nPSK",
+                                                                     "Uses\nDHCHAP"],
                                                tablefmt=table_format)
-                    out_func(f"Connections for {args.subsystem}:\n{connections_out}")
+                    if connections_info.subsystem_nqn == GatewayUtils.ALL_SUBSYSTEMS:
+                        subsys_text = "all subsystems"
+                    out_func(f"Connections for {subsys_text}:\n{connections_out}")
                 else:
-                    out_func(f"No connections for {args.subsystem}")
+                    if connections_info.subsystem_nqn == GatewayUtils.ALL_SUBSYSTEMS:
+                        subsys_text = "any subsystem"
+                    out_func(f"No connections for {subsys_text}")
             else:
                 err_func(f"{connections_info.error_message}")
         elif args.format == "json" or args.format == "yaml":
@@ -1734,7 +1749,7 @@ class GatewayClient:
         argument("--subsystem",
                  "-n",
                  help="Subsystem NQN",
-                 required=True),
+                 required=False),
     ]
     connection_actions = []
     connection_actions.append({"name": "list",

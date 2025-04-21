@@ -518,6 +518,7 @@ message connection {
 	optional bool secure = 9;
 	optional bool use_psk = 10;
 	optional bool use_dhchap = 11;
+        optional string subsystem = 12;
 }
 
 message connections_info {

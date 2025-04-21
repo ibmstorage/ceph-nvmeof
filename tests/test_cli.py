@@ -1389,6 +1389,13 @@ class TestCreate:
         assert f"A specific host {host7} was added to subsystem {subsystem} " \
                f"in which all hosts are allowed" in caplog.text
 
+    def test_create_litener_wrong_subsystem(self, caplog):
+        caplog.clear()
+        cli(["listener", "add", "--subsystem", "junk", "--host-name", "host",
+             "-a", addr, "-s", "5009", "--verify-host-name"])
+        assert f"Failure adding junk listener at {addr}:5009: " \
+               f"can't find subsystem junk" in caplog.text
+
     @pytest.mark.parametrize("listener", listener_list)
     def test_create_listener(self, caplog, listener, gateway):
         caplog.clear()
