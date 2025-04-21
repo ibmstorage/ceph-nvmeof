@@ -848,15 +848,15 @@ class OmapGatewayState(GatewayState):
                         got_omap_lock = True
                         if guard.actually_locked:
                             actually_locked = True
-                            self.logger.info(f"Locked OMAP file before reading its "
-                                             f"content ({self.id_text})")
+                            self.logger.debug(f"Locked OMAP file before reading its "
+                                              f"content ({self.id_text})")
                         else:
-                            self.logger.info(f"OMAP file is already locked, read its "
-                                             f"content ({self.id_text})")
+                            self.logger.debug(f"OMAP file is already locked, read its "
+                                              f"content ({self.id_text})")
                         omap_dict, get_omap_vals_count = self.read_omap_values()
                 if actually_locked:
-                    self.logger.info(f"Released OMAP file lock after reading "
-                                     f"content ({self.id_text})")
+                    self.logger.debug(f"Released OMAP file lock after reading "
+                                      f"content ({self.id_text})")
                 if omap_dict is not None:
                     assert got_omap_lock
                     return omap_dict
