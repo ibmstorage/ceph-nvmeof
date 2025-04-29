@@ -2019,6 +2019,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 try:
                     state_ns = state[ns_key]
                     ns_entry = json.loads(state_ns)
+                    GatewayService.fill_namespace_missing_fields(ns_entry)
                 except Exception:
                     errmsg = f"{change_lb_group_failure_prefix}: Can't find entry for " \
                              f"namespace {request.nsid} in {request.subsystem_nqn}"
@@ -2108,6 +2109,17 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
         return pb2.req_status(status=0, error_message=os.strerror(0))
+
+    @staticmethod
+    def fill_namespace_missing_fields(ns: pb2.namespace_add_req):
+        try:
+            ns["trash_image"]
+        except KeyError:
+            ns["trash_image"] = False
+        try:
+            ns["no_auto_visible"]
+        except KeyError:
+            ns["no_auto_visible"] = False
 
     def namespace_change_load_balancing_group(self, request, context=None):
         """Changes a namespace load balancing group."""
@@ -2199,6 +2211,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 try:
                     state_ns = state[ns_key]
                     ns_entry = json.loads(state_ns)
+                    GatewayService.fill_namespace_missing_fields(ns_entry)
                     if ns_entry["no_auto_visible"] == (not request.auto_visible):
                         self.logger.warning(f"No change to namespace {request.nsid} in "
                                             f"{request.subsystem_nqn} visibility, nothing to do")
@@ -2330,6 +2343,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 try:
                     state_ns = state[ns_key]
                     ns_entry = json.loads(state_ns)
+                    GatewayService.fill_namespace_missing_fields(ns_entry)
                     if ns_entry["trash_image"] == request.trash_image:
                         self.logger.warning(f"Namespace {request.nsid} in {request.subsystem_nqn} "
                                             f"already has the RBD trash image flag set to the "
