@@ -929,7 +929,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         return rc
 
     def create_bdev(self, anagrp: int, name, uuid, rbd_pool_name, rbd_image_name,
-                    block_size, create_image, trash_image, rbd_image_size, context, peer_msg=""):
+                    block_size, create_image, trash_image, rbd_image_size, disable_auto_resize,
+                    context, peer_msg=""):
         """Creates a bdev from an RBD image."""
 
         if create_image:
@@ -1008,6 +1009,14 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 return BdevStatus(status=errcode,
                                   error_message=f"Failure creating bdev {name}: {errmsg}")
 
+        if disable_auto_resize:
+            try:
+                self._set_image_auto_resize(rbd_pool_name, rbd_image_name, False)
+            except Exception as ex:
+                self.logger.warning(f"Error setting auto resize flag for image "
+                                    f"{rbd_pool_name}/{rbd_image_name}, namespace "
+                                    f"will get resized in case of an image resize:\n{ex}")
+
         cluster_name = None
         try:
             cluster_name = self.cluster_allocator.get_cluster(anagrp)
@@ -1081,7 +1090,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if rbd_pool_name and rbd_image_name:
             try:
                 current_size = self.ceph_utils.get_image_size(rbd_pool_name, rbd_image_name)
-                if current_size > new_size * 1024 * 1024:
+                # a new size of 0 is a special case to instruct SPDK to not change the size
+                # and only send a notification to update its internal data
+                if new_size > 0 and current_size > new_size * 1024 * 1024:
                     return pb2.req_status(status=errno.EINVAL,
                                           error_message=f"new size {new_size * 1024 * 1024} bytes "
                                                         f"is smaller than current size "
@@ -1799,6 +1810,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self.logger.info(f"Received request to add namespace {nsid_msg}to "
                          f"{request.subsystem_nqn}, ana group {request.anagrpid}, "
                          f"no_auto_visible: {request.no_auto_visible}, "
+                         f"disable_auto_resize: {request.disable_auto_resize}, "
                          f"context: {context}{peer_msg}")
 
         if not request.uuid:
@@ -1868,7 +1880,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
             anagrp = request.anagrpid
             ret_bdev = self.create_bdev(anagrp, bdev_name, request.uuid, request.rbd_pool_name,
                                         request.rbd_image_name, request.block_size, create_image,
-                                        request.trash_image, request.size, context, peer_msg)
+                                        request.trash_image, request.size,
+                                        request.disable_auto_resize, context, peer_msg)
             if ret_bdev.status != 0:
                 errmsg = f"Failure adding namespace {nsid_msg}to {request.subsystem_nqn}: " \
                          f"{ret_bdev.error_message}"
@@ -2072,7 +2085,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                     trash_image=ns_entry["trash_image"],
                                                     size=int(ns_entry["size"]),
                                                     force=ns_entry["force"],
-                                                    no_auto_visible=ns_entry["no_auto_visible"])
+                                                    no_auto_visible=ns_entry["no_auto_visible"],
+                                                    disable_auto_resize=ns_entry[
+                                                    "disable_auto_resize"])
                     json_req = json_format.MessageToJson(
                         add_req, preserving_proto_field_name=True,
                         including_default_value_fields=True)
@@ -2097,6 +2112,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             ns["no_auto_visible"]
         except KeyError:
             ns["no_auto_visible"] = False
+        try:
+            ns["disable_auto_resize"]
+        except KeyError:
+            ns["disable_auto_resize"] = False
 
     def namespace_change_load_balancing_group(self, request, context=None):
         """Changes a namespace load balancing group."""
@@ -2240,7 +2259,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                     trash_image=ns_entry["trash_image"],
                                                     size=int(ns_entry["size"]),
                                                     force=ns_entry["force"],
-                                                    no_auto_visible=not request.auto_visible)
+                                                    no_auto_visible=not request.auto_visible,
+                                                    disable_auto_resize=ns_entry[
+                                                    "disable_auto_resize"])
                     json_req = json_format.MessageToJson(
                         add_req, preserving_proto_field_name=True,
                         including_default_value_fields=True)
@@ -2347,7 +2368,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                     trash_image=request.trash_image,
                                                     size=int(ns_entry["size"]),
                                                     force=ns_entry["force"],
-                                                    no_auto_visible=ns_entry["no_auto_visible"])
+                                                    no_auto_visible=ns_entry["no_auto_visible"],
+                                                    disable_auto_resize=ns_entry[
+                                                    "disable_auto_resize"])
                     json_req = json_format.MessageToJson(
                         add_req, preserving_proto_field_name=True,
                         including_default_value_fields=True)
@@ -2367,6 +2390,88 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_set_rbd_trash_image(self, request, context=None):
         """Changes RBD trash image flag for a namespace."""
         return self.execute_grpc_function(self.namespace_set_rbd_trash_image_safe, request, context)
+
+    def _set_image_auto_resize(self, rbd_pool: str, rbd_image: str, value: bool) -> None:
+        if value:
+            self.ceph_utils.remove_image_metadata(rbd_pool, rbd_image,
+                                                  CephUtils.METADATA_KEY_AUTO_RESIZE)
+        else:
+            self.ceph_utils.set_image_metadata(rbd_pool, rbd_image,
+                                               CephUtils.METADATA_KEY_AUTO_RESIZE,
+                                               CephUtils.METADATA_VALUE_NO_AUTO_RESIZE)
+
+    def _is_auto_resize_disabled_for_image(self, rbd_pool: str, rbd_image: str) -> bool:
+        try:
+            auto_resize_metadata = self.ceph_utils.get_image_metadata(
+                rbd_pool, rbd_image, CephUtils.METADATA_KEY_AUTO_RESIZE)
+            return auto_resize_metadata.lower() == CephUtils.METADATA_VALUE_NO_AUTO_RESIZE.lower()
+        except Exception:
+            self.logger.exception(f"Error getting auto resize flag for image "
+                                  f"{rbd_pool}/{rbd_image}")
+        return False
+
+    def namespace_set_auto_resize_safe(self, request, context=None):
+        """Sets auto resie flag for a namespace."""
+
+        peer_msg = self.get_peer_message(context)
+        failure_prefix = f"Failure setting auto resize flag for namespace {request.nsid} " \
+                         f"in {request.subsystem_nqn}"
+        auto_resize_txt = "auto resize namespace\""
+        if not request.auto_resize:
+            auto_resize_txt = "do not " + auto_resize_txt
+        auto_resize_txt = "\"" + auto_resize_txt
+        self.logger.info(f"Received request to set the auto resize flag of namespace "
+                         f"{request.nsid} in {request.subsystem_nqn} to {auto_resize_txt}, "
+                         f"context: {context}{peer_msg}")
+
+        if not request.nsid:
+            errmsg = "Failure setting auto resize flag for namespace, missing ID"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        if not request.subsystem_nqn:
+            errmsg = f"Failure setting auto resize flag for namespace {request.nsid}, " \
+                     f"missing subsystem NQN"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"Failure setting auto resize flag for namespace {request.nsid}, " \
+                     f"can't find subsystem \"{request.subsystem_nqn}\""
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
+
+        find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
+            request.subsystem_nqn, request.nsid)
+        if find_ret.empty():
+            errmsg = f"{failure_prefix}: Can't find namespace"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+
+        if not find_ret.pool:
+            errmsg = f"{failure_prefix}: Can't find namespace RBD pool"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+
+        if not find_ret.image:
+            errmsg = f"{failure_prefix}: Can't find namespace RBD image"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+
+        try:
+            self._set_image_auto_resize(find_ret.pool, find_ret.image, request.auto_resize)
+        except Exception:
+            errmsg = f"Error setting auto resize flag for image " \
+                     f"{find_ret.pool}/{find_ret.image}"
+            self.logger.exception(f"{errmsg}")
+            return pb2.req_status(status=errno.EIO, error_message=errmsg)
+
+        return pb2.req_status(status=0, error_message=os.strerror(0))
+
+    def namespace_set_auto_resize(self, request, context=None):
+        """Sets auto resie flag for a namespace."""
+        return self.execute_grpc_function(self.namespace_set_auto_resize_safe, request, context)
 
     def remove_namespace_from_state(self, nqn, nsid, context):
         if not context:
@@ -2458,6 +2563,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         ret_bdev = None
         try:
             bdevs = rpc_bdev.bdev_get_bdevs(self.spdk_rpc_client, name=bdev_name)
+            self.logger.debug(f"bdev_get_bdevs: {bdevs}")
             if (len(bdevs) > 1):
                 self.logger.warning(f"Got {len(bdevs)} bdevs for bdev name {bdev_name}, "
                                     f"will use the first one")
@@ -2579,6 +2685,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                         except Exception:
                             self.logger.exception(f"{ns_bdev=} parse error")
                             pass
+                        one_ns.disable_auto_resize = self._is_auto_resize_disabled_for_image(
+                            one_ns.rbd_pool_name, one_ns.rbd_image_name)
                     namespaces.append(one_ns)
                 if request.subsystem != GatewayUtils.ALL_SUBSYSTEMS:
                     break
@@ -2920,7 +3028,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
-        if request.new_size <= 0:
+        if request.new_size < 0:
             errmsg = f"{failure_prefix}: New size must be positive"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)

@@ -66,6 +66,9 @@ service Gateway {
 	// Set namespace's RBD trash image flag
 	rpc namespace_set_rbd_trash_image(namespace_set_rbd_trash_image_req) returns (req_status) {}
 
+	// Set namespace's auto resize flag
+	rpc namespace_set_auto_resize(namespace_set_auto_resize_req) returns (req_status) {}
+
 	// Deletes a namespace
 	rpc namespace_delete(namespace_delete_req) returns (req_status) {}
 
@@ -145,6 +148,7 @@ message namespace_add_req {
 	optional bool force = 10;
 	optional bool no_auto_visible = 11;
 	optional bool trash_image = 12;
+	optional bool disable_auto_resize = 13;
 }
 
 message namespace_resize_req {
@@ -190,6 +194,12 @@ message namespace_set_rbd_trash_image_req {
 	string subsystem_nqn = 1;
 	uint32 nsid = 2;
 	bool trash_image = 3;
+}
+
+message namespace_set_auto_resize_req {
+	string subsystem_nqn = 1;
+	uint32 nsid = 2;
+	bool auto_resize = 3;
 }
 
 message namespace_delete_req {
@@ -545,6 +555,7 @@ message namespace_cli {
 	repeated string hosts = 14;
 	optional string ns_subsystem_nqn = 15;
 	optional bool trash_image = 16;
+	optional bool disable_auto_resize = 17;
 }
 
 message namespaces_info {

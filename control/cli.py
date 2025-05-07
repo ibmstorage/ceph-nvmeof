@@ -1810,7 +1810,8 @@ class GatewayClient:
                                     size=img_size,
                                     force=args.force,
                                     no_auto_visible=args.no_auto_visible,
-                                    trash_image=args.rbd_trash_image_on_delete)
+                                    trash_image=args.rbd_trash_image_on_delete,
+                                    disable_auto_resize=args.disable_auto_resize)
         try:
             ret = self.stub.namespace_add(req)
         except Exception as ex:
@@ -2035,10 +2036,12 @@ class GatewayClient:
                             visibility = "Restrictive"
 
                     trash_msg = "\n(trash on delete)" if ns.trash_image else ""
+                    auto_resize_msg = "\n(disable auto resize)" if ns.disable_auto_resize else ""
                     namespaces_list.append([subsys_nqn,
                                             ns.nsid,
                                             break_string(ns.bdev_name, "-", 2),
-                                            f"{ns.rbd_pool_name}/{ns.rbd_image_name}{trash_msg}",
+                                            f"{ns.rbd_pool_name}/{ns.rbd_image_name}{trash_msg}"
+                                            f"{auto_resize_msg}",
                                             self.format_size(ns.rbd_image_size),
                                             self.format_size(ns.block_size),
                                             break_string(ns.uuid, "-", 3),
@@ -2537,6 +2540,87 @@ class GatewayClient:
 
         return ret.status
 
+    def ns_set_auto_resize(self, args):
+        """Enable or disable namespace auto resize flag."""
+
+        out_func, err_func, _ = self.get_output_functions(args)
+        if args.nsid <= 0:
+            self.cli.parser.error("nsid value must be positive")
+
+        auto_resize = args.auto_resize_enabled == "yes"
+
+        try:
+            set_auto_resize_req = pb2.namespace_set_auto_resize_req(
+                subsystem_nqn=args.subsystem,
+                nsid=args.nsid, auto_resize=auto_resize)
+            ret = self.stub.namespace_set_auto_resize(set_auto_resize_req)
+        except Exception as ex:
+            ret = pb2.req_status(status=errno.EINVAL,
+                                 error_message=f"Failure setting namespace auto resize flag:\n{ex}")
+
+        auto_resize_text = "auto resize namespace\""
+        if not auto_resize:
+            auto_resize_text = "do not " + auto_resize_text
+        auto_resize_text = "\"" + auto_resize_text
+
+        if args.format == "text" or args.format == "plain":
+            if ret.status == 0:
+                out_func(f"Setting auto resize flag for namespace {args.nsid} in "
+                         f"{args.subsystem} to {auto_resize_text}: Successful")
+            else:
+                err_func(f"{ret.error_message}")
+        elif args.format == "json" or args.format == "yaml":
+            ret_str = json_format.MessageToJson(ret, indent=4,
+                                                including_default_value_fields=True,
+                                                preserving_proto_field_name=True)
+            if args.format == "json":
+                out_func(ret_str)
+            elif args.format == "yaml":
+                obj = json.loads(ret_str)
+                out_func(yaml.dump(obj))
+        elif args.format == "python":
+            return ret
+        else:
+            assert False
+
+        return ret.status
+
+    def ns_refresh_size(self, args):
+        """Refresh namespace size to current RBD image size."""
+
+        out_func, err_func, _ = self.get_output_functions(args)
+        if args.nsid <= 0:
+            self.cli.parser.error("nsid value must be positive")
+
+        try:
+            ret = self.stub.namespace_resize(pb2.namespace_resize_req(
+                subsystem_nqn=args.subsystem, nsid=args.nsid, new_size=0))
+        except Exception as ex:
+            ret = pb2.req_status(status=errno.EINVAL,
+                                 error_message=f"Failure refreshing namespace size:\n{ex}")
+
+        if args.format == "text" or args.format == "plain":
+            if ret.status == 0:
+                out_func(f"Refreshing size for namespace {args.nsid} in {args.subsystem} :"
+                         f" Successful")
+            else:
+                err_func(f"{ret.error_message}")
+        elif args.format == "json" or args.format == "yaml":
+            ret_str = json_format.MessageToJson(ret, indent=4,
+                                                including_default_value_fields=True,
+                                                preserving_proto_field_name=True)
+            if args.format == "json":
+                out_func(ret_str)
+            elif args.format == "yaml":
+                obj = json.loads(ret_str)
+                out_func(yaml.dump(obj))
+        elif args.format == "python":
+            return ret
+        else:
+            assert False
+
+        return ret.status
+
     ns_common_args = [
         argument("--subsystem",
                  "-n",
@@ -2585,6 +2669,10 @@ class GatewayClient:
         argument("--rbd-trash-image-on-delete",
                  help="Trash associated RBD image on namespace deletion. "
                       "Only applies to images created automatically by the gateway",
+                 action='store_true',
+                 required=False),
+        argument("--disable-auto-resize",
+                 help="When the RBD image is resized, not not automatically resize the namespace",
                  action='store_true',
                  required=False),
     ]
@@ -2650,6 +2738,22 @@ class GatewayClient:
                       "to it or active connections on the subsystem",
                  action='store_true',
                  required=False),
+    ]
+    ns_set_auto_resize_args_list = ns_common_args + [
+        argument("--nsid",
+                 help="Namespace ID",
+                 type=int,
+                 required=True),
+        argument("--auto-resize-enabled",
+                 help="Enable or disable auto resize of namespace when RBD image is resized",
+                 choices=["yes", "no"],
+                 required=True),
+    ]
+    ns_refresh_size_args_list = ns_common_args + [
+        argument("--nsid",
+                 help="Namespace ID",
+                 type=int,
+                 required=True),
     ]
     ns_set_qos_args_list = ns_common_args + [
         argument("--nsid",
@@ -2730,7 +2834,12 @@ class GatewayClient:
     ns_actions.append({"name": "set_rbd_trash_image",
                        "args": ns_set_rbd_trash_image_args_list,
                        "help": "Set the RBD trash image on delete flag for a namespace"})
-    ns_choices = get_actions(ns_actions)
+    ns_actions.append({"name": "set_auto_resize",
+                       "args": ns_set_auto_resize_args_list,
+                       "help": "Enable or disable namespace auto resize when RBD image is resized"})
+    ns_actions.append({"name": "refresh_size",
+                       "args": ns_refresh_size_args_list,
+                       "help": "Refresh namespace size to the current RBD image size"})
     ns_choices = get_actions(ns_actions)
 
     @cli.cmd(ns_actions, ["ns"])
@@ -2758,6 +2867,10 @@ class GatewayClient:
             return self.ns_change_visibility(args)
         elif args.action == "set_rbd_trash_image":
             return self.ns_set_rbd_trash_image(args)
+        elif args.action == "set_auto_resize":
+            return self.ns_set_auto_resize(args)
+        elif args.action == "refresh_size":
+            return self.ns_refresh_size(args)
         if not args.action:
             self.cli.parser.error(f"missing action for namespace command "
                                   f"(choose from {GatewayClient.ns_choices})")

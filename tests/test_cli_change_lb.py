@@ -182,9 +182,10 @@ def test_change_namespace_lb_group(caplog, two_gateways):
     assert f"Adding namespace 1 to {subsystem}: Successful" in caplog.text
     assert f"get_cluster cluster_name='cluster_context_{anagrpid}_0'" in caplog.text
     assert f"Received request to add namespace to {subsystem}, ana group {anagrpid}, " \
-           f"no_auto_visible: False, context: <grpc._server" in caplog.text
+           f"no_auto_visible: False, disable_auto_resize: False, " \
+           f"context: <grpc._server" in caplog.text
     assert f"Received request to add namespace 1 to {subsystem}, ana group {anagrpid}, " \
-           f"no_auto_visible: False, context: None" in caplog.text
+           f"no_auto_visible: False, disable_auto_resize: False, context: None" in caplog.text
     caplog.clear()
     cli(["namespace", "set_qos", "--subsystem", subsystem, "--nsid", "1",
          "--rw-ios-per-second", "2000"])
@@ -268,9 +269,10 @@ def test_change_namespace_lb_group(caplog, two_gateways):
     assert f"Adding namespace 2 to {subsystem}: Successful" in caplog.text
     assert f"get_cluster cluster_name='cluster_context_{anagrpid2}_0'" in caplog.text
     assert f"Received request to add namespace to {subsystem}, ana group {anagrpid2}, " \
-           f"no_auto_visible: False, context: <grpc._server" in caplog.text
+           f"no_auto_visible: False, disable_auto_resize: False, " \
+           f"context: <grpc._server" in caplog.text
     assert f"Received request to add namespace 2 to {subsystem}, ana group {anagrpid2}, " \
-           f"no_auto_visible: False, context: None" in caplog.text
+           f"no_auto_visible: False, disable_auto_resize: False, context: None" in caplog.text
     caplog.clear()
     cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "2"])
     assert '"nsid": 2,' in caplog.text
