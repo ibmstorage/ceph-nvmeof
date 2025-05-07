@@ -20,6 +20,9 @@ class CephUtils:
 
     RBD_QOS_PREFIX = "rbd_qos_"
     RBD_QOS_SUFFIX = "_limit"
+    # if these values are changed we need to update SPDK as well
+    METADATA_KEY_AUTO_RESIZE = "NVME_GATEWAY_AUTO_RESIZE"
+    METADATA_VALUE_NO_AUTO_RESIZE = "no"
 
     def __init__(self, config):
         self.logger = GatewayLogger(config).logger
@@ -280,6 +283,72 @@ class CephUtils:
         except Exception:
             self.logger.exception("Failure getting image size")
         return False
+
+    def set_image_metadata(self, pool: str, image_name: str, key: str, value: str) -> None:
+        if not self.pool_exists(pool):
+            raise rbd.ImageNotFound(f"Pool {pool} doesn't exist", errno=errno.ENODEV)
+
+        with rados.Rados(conffile=self.ceph_conf, rados_id=self.rados_id) as cluster:
+            with cluster.open_ioctx(pool) as ioctx:
+                try:
+                    with rbd.Image(ioctx, image_name) as img:
+                        img.metadata_set(key, value)
+                        self.logger.debug(f"Set metadata {key} of image "
+                                          f"{pool}/{image_name} to {value}")
+                except rbd.ImageNotFound:
+                    raise rbd.ImageNotFound(f"Image {pool}/{image_name} doesn't exist",
+                                            errno=errno.ENODEV)
+                except Exception:
+                    self.logger.exception(f"Error while trying to set metadata {key} of image "
+                                          f"{pool}/{image_name} to {value}")
+                    raise
+
+    def get_image_metadata(self, pool: str, image_name: str, key: str) -> str:
+        if not self.pool_exists(pool):
+            raise rbd.ImageNotFound(f"Pool {pool} doesn't exist", errno=errno.ENODEV)
+
+        value = None
+        with rados.Rados(conffile=self.ceph_conf, rados_id=self.rados_id) as cluster:
+            with cluster.open_ioctx(pool) as ioctx:
+                try:
+                    with rbd.Image(ioctx, image_name) as img:
+                        value = img.metadata_get(key)
+                        self.logger.debug(f"Metadata {key} of image {pool}/{image_name} "
+                                          f"is {value}")
+                except rbd.ImageNotFound:
+                    raise rbd.ImageNotFound(f"Image {pool}/{image_name} doesn't exist",
+                                            errno=errno.ENODEV)
+                except KeyError:
+                    self.logger.exception(f"No metadata {key} for image "
+                                          f"{pool}/{image_name}")
+                    raise
+                except Exception:
+                    self.logger.exception(f"Error while trying to get metadata {key} of image "
+                                          f"{pool}/{image_name}")
+                    raise
+        return value
+
+    def remove_image_metadata(self, pool: str, image_name: str, key: str) -> None:
+        if not self.pool_exists(pool):
+            raise rbd.ImageNotFound(f"Pool {pool} doesn't exist", errno=errno.ENODEV)
+
+        with rados.Rados(conffile=self.ceph_conf, rados_id=self.rados_id) as cluster:
+            with cluster.open_ioctx(pool) as ioctx:
+                try:
+                    with rbd.Image(ioctx, image_name) as img:
+                        img.metadata_remove(key)
+                        self.logger.debug(f"Removed metadata {key} of image {pool}/{image_name}")
+                except rbd.ImageNotFound:
+                    raise rbd.ImageNotFound(f"Image {pool}/{image_name} doesn't exist",
+                                            errno=errno.ENODEV)
+                except KeyError:
+                    self.logger.exception(f"No metadata {key} for image "
+                                          f"{pool}/{image_name}")
+                    raise
+                except Exception:
+                    self.logger.exception(f"Error while trying to remove metadata {key} of image "
+                                          f"{pool}/{image_name}")
+                    raise
 
     def get_rbd_exception_details(self, ex):
         ex_details = (None, None)

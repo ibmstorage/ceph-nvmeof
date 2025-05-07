@@ -36,6 +36,7 @@ image21 = "mytestdevimage21"
 image22 = "mytestdevimage22"
 image23 = "mytestdevimage23"
 image24 = "mytestdevimage24"
+image25 = "mytestdevimage25"
 pool = "rbd"
 subsystem = "nqn.2016-06.io.spdk:cnode1"
 subsystem2 = "nqn.2016-06.io.spdk:cnode2"
@@ -757,7 +758,7 @@ class TestCreate:
         assert f"No change to namespace 8 in {subsystem} visibility, nothing to do" in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "8"])
-        assert '"nsid": 8' in caplog.text
+        assert '"nsid": 8,' in caplog.text
         assert '"auto_visible": true' in caplog.text
         assert '"hosts": []' in caplog.text
         caplog.clear()
@@ -771,7 +772,7 @@ class TestCreate:
                f'"visible to selected hosts": Successful' in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "8"])
-        assert '"nsid": 8' in caplog.text
+        assert '"nsid": 8,' in caplog.text
         assert '"auto_visible":' not in caplog.text or '"auto_visible": false' in caplog.text
         assert '"hosts": []' in caplog.text
         caplog.clear()
@@ -779,7 +780,7 @@ class TestCreate:
         assert f"Adding host {host8} to namespace 8 on {subsystem}: Successful" in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "8"])
-        assert '"nsid": 8' in caplog.text
+        assert '"nsid": 8,' in caplog.text
         assert '"auto_visible":' not in caplog.text or '"auto_visible": false' in caplog.text
         assert '"hosts": []' not in caplog.text
         assert f"{host8}" in caplog.text
@@ -920,7 +921,7 @@ class TestCreate:
     def test_list_namespace_with_hosts(self, caplog, gateway):
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "9"])
-        assert '"nsid": 9' in caplog.text
+        assert '"nsid": 9,' in caplog.text
         assert '"auto_visible":' not in caplog.text or '"auto_visible": false' in caplog.text
         assert f'"{host8}"' in caplog.text
         assert '"hosts": []' not in caplog.text
@@ -956,7 +957,7 @@ class TestCreate:
                f"Can't find subsystem" in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "9"])
-        assert '"nsid": 9' in caplog.text
+        assert '"nsid": 9,' in caplog.text
         assert '"auto_visible":' not in caplog.text or '"auto_visible": false' in caplog.text
         assert f'"{host8}"' in caplog.text
         assert '"hosts": []' not in caplog.text
@@ -965,7 +966,7 @@ class TestCreate:
         assert f"Deleting host {host8} from namespace 9 on {subsystem}: Successful" in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "9"])
-        assert '"nsid": 9' in caplog.text
+        assert '"nsid": 9,' in caplog.text
         assert '"auto_visible":' not in caplog.text or '"auto_visible": false' in caplog.text
         assert f'"{host8}"' not in caplog.text
         assert '"hosts": []' in caplog.text
@@ -993,7 +994,7 @@ class TestCreate:
         assert f"Adding host {host10} to namespace 9 on {subsystem}: Successful" in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "9"])
-        assert '"nsid": 9' in caplog.text
+        assert '"nsid": 9,' in caplog.text
         assert '"auto_visible":' not in caplog.text or '"auto_visible": false' in caplog.text
         assert f'"{host8}"' in caplog.text
         assert f'"{host9}"' in caplog.text
@@ -1009,7 +1010,7 @@ class TestCreate:
         assert f"Deleting host {host10} from namespace 9 on {subsystem}: Successful" in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "9"])
-        assert '"nsid": 9' in caplog.text
+        assert '"nsid": 9,' in caplog.text
         assert '"auto_visible":' not in caplog.text or '"auto_visible": false' in caplog.text
         assert f'"{host8}"' not in caplog.text
         assert f'"{host9}"' not in caplog.text
@@ -1028,7 +1029,7 @@ class TestCreate:
     def test_list_namespace_with_no_hosts(self, caplog, gateway):
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "10"])
-        assert '"nsid": 10' in caplog.text
+        assert '"nsid": 10,' in caplog.text
         assert '"auto_visible":' not in caplog.text or '"auto_visible": false' in caplog.text
         assert '"hosts": []' in caplog.text
 
@@ -1047,7 +1048,7 @@ class TestCreate:
         gw, stub = gateway
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "6"])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"block_size": 512' in caplog.text
         assert '"rbd_image_size": "16777216"' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
@@ -1095,15 +1096,15 @@ class TestCreate:
         assert rc == 2
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "6"])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"block_size": 512' in caplog.text
         assert '"rbd_image_size": "33554432"' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
-        assert '"nsid": 1' not in caplog.text
-        assert '"nsid": 2' not in caplog.text
-        assert '"nsid": 3' not in caplog.text
-        assert '"nsid": 4' not in caplog.text
-        assert '"nsid": 5' not in caplog.text
+        assert '"nsid": 1,' not in caplog.text
+        assert '"nsid": 2,' not in caplog.text
+        assert '"nsid": 3,' not in caplog.text
+        assert '"nsid": 4,' not in caplog.text
+        assert '"nsid": 5,' not in caplog.text
         caplog.clear()
         rc = 0
         try:
@@ -1129,79 +1130,79 @@ class TestCreate:
         assert f"Resizing namespace 6 in {subsystem} to 64 MiB: Successful" in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--uuid", uuid2])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"block_size": 512' in caplog.text
         assert '"rbd_image_size": "67108864"' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
-        assert '"nsid": 1' not in caplog.text
-        assert '"nsid": 2' not in caplog.text
-        assert '"nsid": 3' not in caplog.text
-        assert '"nsid": 4' not in caplog.text
-        assert '"nsid": 5' not in caplog.text
+        assert '"nsid": 1,' not in caplog.text
+        assert '"nsid": 2,' not in caplog.text
+        assert '"nsid": 3,' not in caplog.text
+        assert '"nsid": 4,' not in caplog.text
+        assert '"nsid": 5,' not in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem,
              "--uuid", uuid2.upper()])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"block_size": 512' in caplog.text
         assert '"rbd_image_size": "67108864"' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
-        assert '"nsid": 1' not in caplog.text
-        assert '"nsid": 2' not in caplog.text
-        assert '"nsid": 3' not in caplog.text
-        assert '"nsid": 4' not in caplog.text
-        assert '"nsid": 5' not in caplog.text
+        assert '"nsid": 1,' not in caplog.text
+        assert '"nsid": 2,' not in caplog.text
+        assert '"nsid": 3,' not in caplog.text
+        assert '"nsid": 4,' not in caplog.text
+        assert '"nsid": 5,' not in caplog.text
         caplog.clear()
         uuid2_no_dashes = uuid2.replace("-", "")
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem,
              "--uuid", uuid2_no_dashes])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"block_size": 512' in caplog.text
         assert '"rbd_image_size": "67108864"' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
-        assert '"nsid": 1' not in caplog.text
-        assert '"nsid": 2' not in caplog.text
-        assert '"nsid": 3' not in caplog.text
-        assert '"nsid": 4' not in caplog.text
-        assert '"nsid": 5' not in caplog.text
+        assert '"nsid": 1,' not in caplog.text
+        assert '"nsid": 2,' not in caplog.text
+        assert '"nsid": 3,' not in caplog.text
+        assert '"nsid": 4,' not in caplog.text
+        assert '"nsid": 5,' not in caplog.text
         caplog.clear()
         uuid2_no_dashes = uuid2.replace("-", "").upper()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem,
              "--uuid", uuid2_no_dashes])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"block_size": 512' in caplog.text
         assert '"rbd_image_size": "67108864"' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
-        assert '"nsid": 1' not in caplog.text
-        assert '"nsid": 2' not in caplog.text
-        assert '"nsid": 3' not in caplog.text
-        assert '"nsid": 4' not in caplog.text
-        assert '"nsid": 5' not in caplog.text
+        assert '"nsid": 1,' not in caplog.text
+        assert '"nsid": 2,' not in caplog.text
+        assert '"nsid": 3,' not in caplog.text
+        assert '"nsid": 4,' not in caplog.text
+        assert '"nsid": 5,' not in caplog.text
         caplog.clear()
         uuid2_some_dashes = uuid2.replace("-", "", 2)
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem,
              "--uuid", uuid2_some_dashes])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"block_size": 512' in caplog.text
         assert '"rbd_image_size": "67108864"' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
-        assert '"nsid": 1' not in caplog.text
-        assert '"nsid": 2' not in caplog.text
-        assert '"nsid": 3' not in caplog.text
-        assert '"nsid": 4' not in caplog.text
-        assert '"nsid": 5' not in caplog.text
+        assert '"nsid": 1,' not in caplog.text
+        assert '"nsid": 2,' not in caplog.text
+        assert '"nsid": 3,' not in caplog.text
+        assert '"nsid": 4,' not in caplog.text
+        assert '"nsid": 5,' not in caplog.text
         caplog.clear()
         uuid2_some_dashes = uuid2.replace("-", "", 2).upper()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem,
              "--uuid", uuid2_some_dashes])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"block_size": 512' in caplog.text
         assert '"rbd_image_size": "67108864"' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
-        assert '"nsid": 1' not in caplog.text
-        assert '"nsid": 2' not in caplog.text
-        assert '"nsid": 3' not in caplog.text
-        assert '"nsid": 4' not in caplog.text
-        assert '"nsid": 5' not in caplog.text
+        assert '"nsid": 1,' not in caplog.text
+        assert '"nsid": 2,' not in caplog.text
+        assert '"nsid": 3,' not in caplog.text
+        assert '"nsid": 4,' not in caplog.text
+        assert '"nsid": 5,' not in caplog.text
         caplog.clear()
         cli(["namespace", "resize", "--subsystem", subsystem, "--nsid", "22", "--size", "128MB"])
         assert f"Failure resizing namespace 22 on {subsystem}: Can't find namespace" in caplog.text
@@ -1224,7 +1225,7 @@ class TestCreate:
     def test_set_namespace_qos_limits(self, caplog, gateway):
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "6"])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"rw_ios_per_second": "0"' in caplog.text
         assert '"rw_mbytes_per_second": "0"' in caplog.text
         assert '"r_mbytes_per_second": "0"' in caplog.text
@@ -1242,7 +1243,7 @@ class TestCreate:
                f"namespace 6 on {subsystem}" in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "6"])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
         assert '"rw_ios_per_second": "2000"' in caplog.text
         assert '"rw_mbytes_per_second": "0"' in caplog.text
@@ -1257,7 +1258,7 @@ class TestCreate:
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--uuid", uuid2])
         assert f'"uuid": "{uuid2}"' in caplog.text
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"rw_ios_per_second": "2000"' in caplog.text
         assert '"rw_mbytes_per_second": "30"' in caplog.text
         assert '"r_mbytes_per_second": "0"' in caplog.text
@@ -1270,7 +1271,7 @@ class TestCreate:
                f"namespace 6 on {subsystem}" not in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "6"])
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert '"rw_ios_per_second": "2000"' in caplog.text
         assert '"rw_mbytes_per_second": "30"' in caplog.text
         assert '"r_mbytes_per_second": "15"' in caplog.text
@@ -1308,7 +1309,7 @@ class TestCreate:
              "--subsystem", subsystem, "--nsid", "6"])
         assert '"status": 0' in caplog.text
         assert f'"subsystem_nqn": "{subsystem}"' in caplog.text
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         assert f'"uuid": "{uuid2}"' in caplog.text
         assert '"ticks":' in caplog.text
         assert '"bytes_written":' in caplog.text
@@ -1541,24 +1542,24 @@ class TestCreate:
         assert '"subsystem_nqn": "*"' in caplog.text
         assert f'"ns_subsystem_nqn": "{subsystem}"' in caplog.text
         assert f'"ns_subsystem_nqn": "{subsystem9}"' in caplog.text
-        assert '"nsid": 1' in caplog.text
-        assert '"nsid": 2' in caplog.text
-        assert '"nsid": 6' in caplog.text
+        assert '"nsid": 1,' in caplog.text
+        assert '"nsid": 2,' in caplog.text
+        assert '"nsid": 6,' in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--nsid", "1"])
         assert '"subsystem_nqn": "*"' in caplog.text
         assert f'"ns_subsystem_nqn": "{subsystem}"' in caplog.text
         assert f'"ns_subsystem_nqn": "{subsystem9}"' in caplog.text
-        assert '"nsid": 1' in caplog.text
-        assert '"nsid": 2' not in caplog.text
+        assert '"nsid": 1,' in caplog.text
+        assert '"nsid": 2,' not in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--nsid", "6"])
         assert '"subsystem_nqn": "*"' in caplog.text
         assert f'"ns_subsystem_nqn": "{subsystem}"' in caplog.text
         assert f'"ns_subsystem_nqn": "{subsystem9}"' not in caplog.text
-        assert '"nsid": 6' in caplog.text
-        assert '"nsid": 1' not in caplog.text
-        assert '"nsid": 2' not in caplog.text
+        assert '"nsid": 6,' in caplog.text
+        assert '"nsid": 1,' not in caplog.text
+        assert '"nsid": 2,' not in caplog.text
         caplog.clear()
         cli(["--format", "json", "namespace", "list", "--uuid", uuid])
         assert '"subsystem_nqn": "*"' in caplog.text
@@ -2162,3 +2163,59 @@ class TestListenerBadIPAddresses:
             pass
         assert "error: IP address :: is not an IPv4 address" in caplog.text
         assert rc == 2
+
+
+class TestImageResize:
+    def test_namespace_no_auto_resize(self, caplog, gateway):
+        caplog.clear()
+        cli(["namespace", "add", "--subsystem", subsystem11, "--rbd-pool", pool,
+             "--rbd-image", image25, "--size", "10MB",
+             "--rbd-create-image", "--disable-auto-resize"])
+        assert f"Adding namespace 1 to {subsystem11}: Successful" in caplog.text
+        caplog.clear()
+        cli(["--format", "json", "namespace", "list", "--subsystem", subsystem11, "--nsid", "1"])
+        assert '"status": 0' in caplog.text
+        assert f'"subsystem_nqn": "{subsystem11}",' in caplog.text
+        assert '"nsid": 1,' in caplog.text
+        assert f'"rbd_image_name": "{image25}",' in caplog.text
+        assert '"disable_auto_resize": true,' in caplog.text
+        caplog.clear()
+        cli(["namespace", "set_auto_resize", "--subsystem", "junk", "--nsid", "1",
+             "--auto-resize-enabled", "yes"])
+        assert 'Failure setting auto resize flag for namespace 1, ' \
+               'can\'t find subsystem "junk"' in caplog.text
+        caplog.clear()
+        rc = 0
+        try:
+            cli(["namespace", "set_auto_resize", "--subsystem", subsystem11, "--nsid", "1",
+                 "--auto-resize-enabled", "junk"])
+        except SystemExit as sysex:
+            rc = int(str(sysex))
+            pass
+        assert "error: argument --auto-resize-enabled: invalid choice: 'junk' " \
+               "(choose from 'yes', 'no')" in caplog.text
+        assert rc == 2
+        caplog.clear()
+        cli(["namespace", "set_auto_resize", "--subsystem", subsystem11, "--nsid", "1",
+             "--auto-resize-enabled", "yes"])
+        assert f"Setting auto resize flag for namespace 1 in {subsystem11} to " \
+               f"\"auto resize namespace\": Successful" in caplog.text
+        caplog.clear()
+        cli(["--format", "json", "namespace", "list", "--subsystem", subsystem11, "--nsid", "1"])
+        assert '"status": 0' in caplog.text
+        assert f'"subsystem_nqn": "{subsystem11}",' in caplog.text
+        assert '"nsid": 1,' in caplog.text
+        assert f'"rbd_image_name": "{image25}",' in caplog.text
+        assert '"disable_auto_resize": false,' in caplog.text
+        caplog.clear()
+        cli(["namespace", "set_auto_resize", "--subsystem", subsystem11, "--nsid", "1",
+             "--auto-resize-enabled", "no"])
+        assert f"Setting auto resize flag for namespace 1 in {subsystem11} to " \
+               f"\"do not auto resize namespace\": Successful" in caplog.text
+        caplog.clear()
+        cli(["--format", "json", "namespace", "list", "--subsystem", subsystem11, "--nsid", "1"])
+        assert '"status": 0' in caplog.text
+        assert f'"subsystem_nqn": "{subsystem11}",' in caplog.text
+        assert '"nsid": 1,' in caplog.text
+        assert f'"rbd_image_name": "{image25}",' in caplog.text
+        assert '"disable_auto_resize": true,' in caplog.text
