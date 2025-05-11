@@ -4464,7 +4464,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                             return pb2.req_status(status=errno.EEXIST, error_message=errmsg)
 
                     if self.verify_listener_ip:
-                        nics = NICS(True)
+                        nics = NICS(self.logger, True)
                         if not nics.verify_ip_address(traddr, adrfam):
                             for dev in nics.adapters.values():
                                 self.logger.debug(f"NIC: {dev}")
