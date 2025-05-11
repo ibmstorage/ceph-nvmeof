@@ -512,7 +512,8 @@ class GatewayLogger:
 
 
 class NICS:
-    def __init__(self, handle_all=False):
+    def __init__(self, logger=None, handle_all=False):
+        self.logger = logger
         self.ignored_device_prefixes = ('lo')
         self.addresses = {}
         self.adapters = {}
@@ -521,10 +522,20 @@ class NICS:
         self._build_adapter_info()
 
     def _build_adapter_info(self):
-        for device_name in netifaces.interfaces():
+        interfaces = netifaces.interfaces()
+        if self.logger:
+            self.logger.debug(f"Network interfaces: {interfaces}")
+        for device_name in interfaces:
             if device_name.startswith(self.ignored_device_prefixes):
                 continue
-            nic = NIC(device_name)
+            try:
+                nic = NIC(device_name)
+            except Exception:
+                if self.logger:
+                    self.logger.exception(f"Error in interface {device_name}")
+                continue
+            if self.logger:
+                self.logger.debug(f"interface {device_name}: {nic}")
             for ipv4_addr in nic.ipv4_addresses:
                 self.addresses[ipv4_addr] = device_name
             for ipv6_addr in nic.ipv6_addresses:
