@@ -210,11 +210,17 @@ class NVMeOFCollector:
     def _get_data(self):
         """Gather data from the SPDK"""
         self.bdev_info = self._get_bdev_info()
+        logger.debug("Done with _get_bdev_info()")
         self.bdev_io_stats = self._get_bdev_io_stats()
+        logger.debug("Done with _get_bdev_io_stats()")
         self.spdk_thread_stats = self._get_spdk_thread_stats()
+        logger.debug("Done with _get_spdk_thread_stats()")
         self.subsystems = self._get_subsystems()
+        logger.debug("Done with _get_subsystems()")
         self.subsystems_cli = self._list_subsystems()
+        logger.debug("Done with _list_subsystems()")
         self.connections = self._get_connection_map(self.subsystems)
+        logger.debug("Done with _get_connection_map()")
 
     @ttl
     def collect(self):
@@ -230,10 +236,11 @@ class NVMeOFCollector:
 
         elapsed = sum(self.method_timings.values())
         if elapsed > self.interval:
-            logger.error(f"Stats refresh time > interval time of {self.interval} secs")
+            logger.error(f"Stats refresh time {elapsed:.3f} > interval time of "
+                         f"{self.interval} secs")
         elif elapsed > self.interval * COLLECTION_ELAPSED_WARNING:
             logger.warning(f"Stats refresh of {elapsed:.2f}s is close to exceeding "
-                           f"the interval {self.interval}s")
+                           f"the interval {self.interval} secs")
         else:
             logger.debug(f"Stats refresh completed in {elapsed:.3f} secs.")
 
