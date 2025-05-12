@@ -236,8 +236,6 @@ class NVMeOFCollector:
         logger.debug("Done with _list_subsystems()")
         self.connections = self._get_connection_map(self.subsystems)
         logger.debug("Done with _get_connection_map()")
-        self.hosts = self._get_host_map(self.subsystems)
-        logger.debug("Done with _get_host_map()")
 
     @ttl
     def collect(self):
