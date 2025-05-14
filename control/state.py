@@ -453,7 +453,11 @@ class OmapLock:
             lock_kind = OmapLock.SHARED_LOCK_NAME
 
         lock_cookie = self.build_omap_lock_cookie(lock_exclusive, cookie_suffix)
-        for i in range(0, self.omap_file_lock_retries + 1):
+        i = 0
+        while i <= self.omap_file_lock_retries:
+            if not self.gateway_state.update_is_active_lock.locked():
+                i += 1
+
             try:
                 if lock_exclusive:
                     self.omap_state.ioctx.lock_exclusive(self.omap_state.omap_name,
