@@ -460,7 +460,11 @@ class OmapLock:
             lock_kind = OmapLock.SHARED_LOCK_NAME
 
         lock_cookie = self.build_omap_lock_cookie(lock_exclusive, cookie_suffix)
-        for i in range(0, self.omap_file_lock_retries + 1):
+        i = 0
+        while i <= self.omap_file_lock_retries:
+            if not self.gateway_state.update_is_active_lock.locked():
+                i += 1
+
             try:
                 if lock_exclusive:
                     self.omap_state.ioctx.lock_exclusive(self.omap_state.omap_name,
@@ -1059,6 +1063,9 @@ class GatewayStateHandler:
             self.update_interval = 1
         self.use_notify = self.config.getboolean("gateway",
                                                  "state_update_notify")
+        self.break_update_interval = self.config.getint_with_default("gateway",
+                                                                     "break_update_interval_sec",
+                                                                     25)
         self.update_is_active_lock = threading.Lock()
         self.id_text = id_text
         self.up_and_running = True
@@ -1716,9 +1723,9 @@ class GatewayStateHandler:
             for prefix in prefix_list:
                 component_update = grouped_state_update.get(prefix, {})
                 if component_update:
-                    self.gateway_rpc_caller(component_update, True)
+                    self.gateway_rpc_caller(component_update, True, self.break_update_interval)
         else:
             for prefix in list(reversed(prefix_list)):
                 component_update = grouped_state_update.get(prefix, {})
                 if component_update:
-                    self.gateway_rpc_caller(component_update, False)
+                    self.gateway_rpc_caller(component_update, False, self.break_update_interval)

@@ -976,9 +976,25 @@ class GatewayServer:
         else:
             self.logger.warning(f"Can't find huge pages file {hugepages_file}")
 
-    def gateway_rpc_caller(self, requests, is_add_req):
+    def _sleep_if_needed(self, interval, start):
+        if interval <= 0:
+            return None
+
+        if not start:
+            start = time.monotonic()
+
+        if time.monotonic() - start >= interval:
+            self.logger.debug("Will sleep and let other threads work")
+            time.sleep(0)
+            start = time.monotonic()
+
+        return start
+
+    def gateway_rpc_caller(self, requests, is_add_req, break_interval):
         """Passes RPC requests to gateway service."""
+        start_time = 0
         for key, val in requests.items():
+            start_time = self._sleep_if_needed(break_interval, start_time)
             if key.startswith(GatewayState.SUBSYSTEM_PREFIX):
                 if is_add_req:
                     req = json_format.Parse(val, pb2.create_subsystem_req(),

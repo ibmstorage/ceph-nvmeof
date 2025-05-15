@@ -949,7 +949,7 @@ class DiscoveryService:
         self_conn.recv_async = True
         self_conn.async_cmd_id = cmd_id
 
-    def _state_notify_update(self, update, is_add_req):
+    def _state_notify_update(self, update, is_add_req, break_interval):
         """Notify and reply async event."""
 
         should_send_async_event = False
