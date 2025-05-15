@@ -2404,7 +2404,11 @@ class GatewayService(pb2_grpc.GatewayServicer):
         try:
             auto_resize_metadata = self.ceph_utils.get_image_metadata(
                 rbd_pool, rbd_image, CephUtils.METADATA_KEY_AUTO_RESIZE)
+            if auto_resize_metadata is None:
+                return False
             return auto_resize_metadata.lower() == CephUtils.METADATA_VALUE_NO_AUTO_RESIZE.lower()
+        except KeyError:
+            pass
         except Exception:
             self.logger.exception(f"Error getting auto resize flag for image "
                                   f"{rbd_pool}/{rbd_image}")
