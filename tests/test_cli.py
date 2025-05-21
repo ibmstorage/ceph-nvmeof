@@ -1941,8 +1941,16 @@ class TestSPDKLOg:
     def test_log_flags(self, caplog, gateway):
         caplog.clear()
         cli(["spdk_log_level", "get"])
-        assert 'SPDK nvmf log flag "nvmf" is disabled' in caplog.text
-        assert 'SPDK nvmf log flag "nvmf_tcp" is disabled' in caplog.text
+        assert 'SPDK log flag "nvmf" is disabled' in caplog.text
+        assert 'SPDK log flag "nvmf_tcp" is disabled' in caplog.text
+        assert "virtio" not in caplog.text
+        assert 'SPDK log level is NOTICE' in caplog.text
+        assert 'SPDK log print level is INFO' in caplog.text
+        caplog.clear()
+        cli(["spdk_log_level", "get", "--all-log-flags"])
+        assert 'SPDK log flag "nvmf" is disabled' in caplog.text
+        assert 'SPDK log flag "nvmf_tcp" is disabled' in caplog.text
+        assert 'SPDK log flag "virtio" is disabled' in caplog.text
         assert 'SPDK log level is NOTICE' in caplog.text
         assert 'SPDK log print level is INFO' in caplog.text
         caplog.clear()
@@ -1950,8 +1958,8 @@ class TestSPDKLOg:
         assert "Set SPDK log levels and nvmf log flags: Successful" in caplog.text
         caplog.clear()
         cli(["spdk_log_level", "get"])
-        assert 'SPDK nvmf log flag "nvmf" is enabled' in caplog.text
-        assert 'SPDK nvmf log flag "nvmf_tcp" is enabled' in caplog.text
+        assert 'SPDK log flag "nvmf" is enabled' in caplog.text
+        assert 'SPDK log flag "nvmf_tcp" is enabled' in caplog.text
         assert 'SPDK log level is NOTICE' in caplog.text
         assert 'SPDK log print level is INFO' in caplog.text
         caplog.clear()
@@ -1959,8 +1967,8 @@ class TestSPDKLOg:
         assert "Set SPDK log levels and nvmf log flags: Successful" in caplog.text
         caplog.clear()
         cli(["spdk_log_level", "get"])
-        assert 'SPDK nvmf log flag "nvmf" is enabled' in caplog.text
-        assert 'SPDK nvmf log flag "nvmf_tcp" is enabled' in caplog.text
+        assert 'SPDK log flag "nvmf" is enabled' in caplog.text
+        assert 'SPDK log flag "nvmf_tcp" is enabled' in caplog.text
         assert 'SPDK log level is DEBUG' in caplog.text
         assert 'SPDK log print level is INFO' in caplog.text
         caplog.clear()
@@ -1968,17 +1976,17 @@ class TestSPDKLOg:
         assert "Set SPDK log levels and nvmf log flags: Successful" in caplog.text
         caplog.clear()
         cli(["spdk_log_level", "get"])
-        assert 'SPDK nvmf log flag "nvmf" is enabled' in caplog.text
-        assert 'SPDK nvmf log flag "nvmf_tcp" is enabled' in caplog.text
+        assert 'SPDK log flag "nvmf" is enabled' in caplog.text
+        assert 'SPDK log flag "nvmf_tcp" is enabled' in caplog.text
         assert 'SPDK log level is DEBUG' in caplog.text
         assert 'SPDK log print level is ERROR' in caplog.text
         caplog.clear()
         cli(["spdk_log_level", "disable"])
-        assert "Disable SPDK nvmf log flags: Successful" in caplog.text
+        assert "Disable SPDK log flags: Successful" in caplog.text
         caplog.clear()
         cli(["spdk_log_level", "get"])
-        assert 'SPDK nvmf log flag "nvmf" is disabled' in caplog.text
-        assert 'SPDK nvmf log flag "nvmf_tcp" is disabled' in caplog.text
+        assert 'SPDK log flag "nvmf" is disabled' in caplog.text
+        assert 'SPDK log flag "nvmf_tcp" is disabled' in caplog.text
         assert 'SPDK log level is NOTICE' in caplog.text
         assert 'SPDK log print level is INFO' in caplog.text
         caplog.clear()
@@ -1989,6 +1997,29 @@ class TestSPDKLOg:
             rc = int(str(sysex))
             pass
         assert "error: argument --level/-l: invalid choice: 'JUNK'" in caplog.text
+        assert rc == 2
+        caplog.clear()
+        cli(["spdk_log_level", "set", "--extra-log-flags", "virtio", "vmd"])
+        assert "Set SPDK log levels and nvmf log flags: Successful" in caplog.text
+        caplog.clear()
+        cli(["spdk_log_level", "get", "--all-log-flags"])
+        assert 'SPDK log flag "virtio" is enabled' in caplog.text
+        assert 'SPDK log flag "vmd" is enabled' in caplog.text
+        caplog.clear()
+        cli(["spdk_log_level", "disable", "--extra-log-flags", "virtio", "vmd"])
+        assert "Disable SPDK log flags: Successful" in caplog.text
+        caplog.clear()
+        cli(["spdk_log_level", "get", "--all-log-flags"])
+        assert 'SPDK log flag "virtio" is disabled' in caplog.text
+        assert 'SPDK log flag "vmd" is disabled' in caplog.text
+        caplog.clear()
+        rc = 0
+        try:
+            cli(["spdk_log_level", "set", "--extra-log-flags"])
+        except SystemExit as sysex:
+            rc = int(str(sysex))
+            pass
+        assert "error: argument --extra-log-flags/-e: expected at least one argument" in caplog.text
         assert rc == 2
 
 

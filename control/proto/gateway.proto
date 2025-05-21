@@ -308,14 +308,17 @@ message get_subsystems_req {
 }
 
 message get_spdk_nvmf_log_flags_and_level_req {
+	optional bool all_log_flags = 1;
 }
 
 message disable_spdk_nvmf_logs_req {
+	repeated string extra_log_flags = 1;
 }
 
 message set_spdk_nvmf_logs_req {
 	optional LogLevel log_level = 1;
 	optional LogLevel print_level = 2;
+	repeated string extra_log_flags = 3;
 }
 
 message get_gateway_info_req {

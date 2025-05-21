@@ -651,20 +651,20 @@ class GatewayClient:
                                   f"{GatewayClient.gw_choices})")
 
     def spdk_log_level_disable(self, args):
-        """Disable SPDK nvmf log flags"""
+        """Disable SPDK log flags"""
 
         out_func, err_func, _ = self.get_output_functions(args)
 
-        req = pb2.disable_spdk_nvmf_logs_req()
+        req = pb2.disable_spdk_nvmf_logs_req(extra_log_flags=args.extra_log_flags)
         try:
             ret = self.stub.disable_spdk_nvmf_logs(req)
         except Exception as ex:
             ret = pb2.req_status(status=errno.EINVAL,
-                                 error_message=f"Failure disabling SPDK nvmf log flags:\n{ex}")
+                                 error_message=f"Failure disabling SPDK log flags:\n{ex}")
 
         if args.format == "text" or args.format == "plain":
             if ret.status == 0:
-                out_func("Disable SPDK nvmf log flags: Successful")
+                out_func("Disable SPDK log flags: Successful")
             else:
                 err_func(f"{ret.error_message}")
         elif args.format == "json" or args.format == "yaml":
@@ -688,7 +688,7 @@ class GatewayClient:
 
         out_func, err_func, _ = self.get_output_functions(args)
 
-        req = pb2.get_spdk_nvmf_log_flags_and_level_req()
+        req = pb2.get_spdk_nvmf_log_flags_and_level_req(all_log_flags=args.all_log_flags)
         try:
             ret = self.stub.get_spdk_nvmf_log_flags_and_level(req)
         except Exception as ex:
@@ -700,7 +700,7 @@ class GatewayClient:
             if ret.status == 0:
                 for flag in ret.nvmf_log_flags:
                     enabled_str = "enabled" if flag.enabled else "disabled"
-                    out_func(f"SPDK nvmf log flag \"{flag.name}\" is {enabled_str}")
+                    out_func(f"SPDK log flag \"{flag.name}\" is {enabled_str}")
                 level = GatewayEnumUtils.get_key_from_value(pb2.LogLevel, ret.log_level)
                 out_func(f"SPDK log level is {level}")
                 level = GatewayEnumUtils.get_key_from_value(pb2.LogLevel, ret.log_print_level)
@@ -737,7 +737,9 @@ class GatewayClient:
             print_level = args.print.upper()
 
         try:
-            req = pb2.set_spdk_nvmf_logs_req(log_level=log_level, print_level=print_level)
+            req = pb2.set_spdk_nvmf_logs_req(log_level=log_level,
+                                             print_level=print_level,
+                                             extra_log_flags=args.extra_log_flags)
         except ValueError as err:
             self.cli.parser.error(f"invalid log level {log_level}, error {err}")
 
@@ -769,14 +771,24 @@ class GatewayClient:
 
         return ret.status
 
-    spdk_log_get_args = []
-    spdk_log_set_args = [
-        argument("--level", "-l", help="SPDK nvmf log level", required=False,
-                 type=str, choices=get_enum_keys_list(pb2.LogLevel)),
-        argument("--print", "-p", help="SPDK nvmf log print level", required=False,
-                 type=str, choices=get_enum_keys_list(pb2.LogLevel)),
+    spdk_log_get_args = [
+        argument("--all-log-flags", "-a",
+                 help="Get all log flags, not just the NVMF ones",
+                 action='store_true',
+                 required=False),
     ]
-    spdk_log_disable_args = []
+    spdk_log_set_args = [
+        argument("--level", "-l", help="SPDK log level", required=False,
+                 type=str, choices=get_enum_keys_list(pb2.LogLevel)),
+        argument("--print", "-p", help="SPDK log print level", required=False,
+                 type=str, choices=get_enum_keys_list(pb2.LogLevel)),
+        argument("--extra-log-flags", "-e", help="Extra log flags to set, not NVMF ones",
+                 type=str, nargs="+", required=False),
+    ]
+    spdk_log_disable_args = [
+        argument("--extra-log-flags", "-e", help="Extra log flags to reset, not NVMF ones",
+                 type=str, nargs="+", required=False),
+    ]
     spdk_log_actions = []
     spdk_log_actions.append({"name": "get",
                              "args": spdk_log_get_args,
@@ -786,12 +798,12 @@ class GatewayClient:
                              "help": "Set SPDK log levels and nvmf log flags"})
     spdk_log_actions.append({"name": "disable",
                              "args": spdk_log_disable_args,
-                             "help": "Disable SPDK nvmf log flags"})
+                             "help": "Disable SPDK log flags"})
     spdk_log_choices = get_actions(spdk_log_actions)
 
     @cli.cmd(spdk_log_actions)
     def spdk_log_level(self, args):
-        """SPDK nvmf log level commands"""
+        """SPDK log level commands"""
         if args.action == "get":
             return self.spdk_log_level_get(args)
         elif args.action == "set":
