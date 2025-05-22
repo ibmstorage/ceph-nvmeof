@@ -1,6 +1,8 @@
 ---
 # yamllint disable rule:line-length
 name: "CI"
+permissions:
+  contents: read
 on:  # yamllint disable rule:truthy
   push:
     tags:
