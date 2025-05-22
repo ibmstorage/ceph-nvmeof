@@ -5146,11 +5146,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def get_spdk_nvmf_log_flags_and_level_safe(self, request, context):
         """Gets spdk nvmf log flags, log level and log print level"""
         peer_msg = self.get_peer_message(context)
-        self.logger.info(f"Received request to get SPDK nvmf log flags and level{peer_msg}")
+        self.logger.info(f"Received request to get SPDK log flags and level, "
+                         f"all_log_flags: {request.all_log_flags}{peer_msg}")
         log_flags = []
         try:
             nvmf_log_flags = {key: value for key, value in rpc_log.log_get_flags(
-                self.spdk_rpc_client).items() if key.startswith('nvmf')}
+                self.spdk_rpc_client).items() if request.all_log_flags or key.startswith('nvmf')}
             for flag, flagvalue in nvmf_log_flags.items():
                 pb2_log_flag = pb2.spdk_log_flag_info(name=flag, enabled=flagvalue)
                 log_flags.append(pb2_log_flag)
@@ -5203,15 +5204,16 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 self.logger.error(errmsg)
                 return pb2.req_status(status=errno.ENOKEY, error_message=errmsg)
 
-        self.logger.info(f"Received request to set SPDK nvmf logs: log_level: {log_level}, "
-                         f"print_level: {print_level}{peer_msg}")
+        self.logger.info(f"Received request to set SPDK logs: log_level: {log_level}, "
+                         f"print_level: {print_level}, extra: {request.extra_log_flags}{peer_msg}")
 
         try:
             nvmf_log_flags = [key for key in rpc_log.log_get_flags(self.spdk_rpc_client).keys()
                               if key.startswith('nvmf')]
+            nvmf_log_flags += request.extra_log_flags
             ret = [rpc_log.log_set_flag(
                 self.spdk_rpc_client, flag=flag) for flag in nvmf_log_flags]
-            self.logger.debug(f"Set SPDK nvmf log flags {nvmf_log_flags} to TRUE: {ret}")
+            self.logger.debug(f"Set SPDK log flags {nvmf_log_flags} to TRUE: {ret}")
             if log_level is not None:
                 ret_log = rpc_log.log_set_level(self.spdk_rpc_client, level=log_level)
                 self.logger.debug(f"Set log level to {log_level}: {ret_log}")
@@ -5242,7 +5244,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
             errmsg = "Failure setting SPDK print log level"
         elif not all(ret):
             status = errno.EINVAL
-            errmsg = "Failure setting some SPDK nvmf log flags"
+            errmsg = "Failure setting some SPDK log flags"
         return pb2.req_status(status=status, error_message=errmsg)
 
     def set_spdk_nvmf_logs(self, request, context=None):
@@ -5251,32 +5253,35 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def disable_spdk_nvmf_logs_safe(self, request, context):
         """Disables spdk nvmf logs"""
         peer_msg = self.get_peer_message(context)
-        self.logger.info(f"Received request to disable SPDK nvmf logs{peer_msg}")
+        self.logger.info(f"Received request to disable SPDK logs, "
+                         f"extra: {request.extra_log_flags}{peer_msg}")
 
         try:
             nvmf_log_flags = [key for key in rpc_log.log_get_flags(self.spdk_rpc_client).keys()
                               if key.startswith('nvmf')]
+            nvmf_log_flags += request.extra_log_flags
             ret = [rpc_log.log_clear_flag(self.spdk_rpc_client, flag=flag)
                    for flag in nvmf_log_flags]
+            self.logger.debug(f"Set SPDK log flags {nvmf_log_flags} to FALSE: {ret}")
             logs_level = [rpc_log.log_set_level(self.spdk_rpc_client, level='NOTICE'),
                           rpc_log.log_set_print_level(self.spdk_rpc_client, level='INFO')]
             ret.extend(logs_level)
         except Exception as ex:
-            errmsg = "Failure in disable SPDK nvmf log flags"
+            errmsg = "Failure in disable SPDK log flags"
             self.logger.exception(errmsg)
             errmsg = f"{errmsg}:\n{ex}"
             resp = self.parse_json_exeption(ex)
             status = errno.EINVAL
             if resp:
                 status = resp["code"]
-                errmsg = f"Failure in disable SPDK nvmf log flags: {resp['message']}"
+                errmsg = f"Failure in disable SPDK log flags: {resp['message']}"
             return pb2.req_status(status=status, error_message=errmsg)
 
         status = 0
         errmsg = os.strerror(0)
         if not all(ret):
             status = errno.EINVAL
-            errmsg = "Failure in disable SPDK nvmf log flags"
+            errmsg = "Failure in disable SPDK log flags"
         return pb2.req_status(status=status, error_message=errmsg)
 
     def disable_spdk_nvmf_logs(self, request, context=None):
