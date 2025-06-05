@@ -125,6 +125,7 @@ def test_change_namespace_visibility(caplog, two_gateways):
     cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "1"])
     assert '"nsid": 1,' in caplog.text
     assert '"auto_visible":' not in caplog.text or '"auto_visible": false,' in caplog.text
+    assert '"read_only": false,' in caplog.text
     caplog.clear()
     cli(["--server-port", "5502", "namespace", "change_visibility",
          "--subsystem", subsystem, "--nsid", "1", "--auto-visible", "yes"])
@@ -142,3 +143,4 @@ def test_change_namespace_visibility(caplog, two_gateways):
          "--subsystem", subsystem, "--nsid", "1"])
     assert '"nsid": 1,' in caplog.text
     assert '"auto_visible": true,' in caplog.text
+    assert '"read_only": false,' in caplog.text

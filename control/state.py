@@ -166,10 +166,6 @@ class GatewayState(ABC):
                 self._remove_key(key)
             elif key.startswith(GatewayState.build_namespace_host_key(subsystem_nqn, nsid, "")):
                 self._remove_key(key)
-            elif key.startswith(GatewayState.build_namespace_visibility_key(subsystem_nqn, nsid)):
-                self._remove_key(key)
-            elif key.startswith(GatewayState.build_namespace_lbgroup_key(subsystem_nqn, nsid)):
-                self._remove_key(key)
 
     def add_namespace_qos(self, subsystem_nqn: str, nsid: str, val: str):
         """Adds namespace's QOS settings to the state data store."""
@@ -210,10 +206,6 @@ class GatewayState(ABC):
             elif key.startswith(GatewayState.build_namespace_qos_key(subsystem_nqn, None)):
                 self._remove_key(key)
             elif key.startswith(GatewayState.build_namespace_host_key(subsystem_nqn, None, "")):
-                self._remove_key(key)
-            elif key.startswith(GatewayState.build_namespace_visibility_key(subsystem_nqn, None)):
-                self._remove_key(key)
-            elif key.startswith(GatewayState.build_namespace_lbgroup_key(subsystem_nqn, None)):
                 self._remove_key(key)
             elif key.startswith(GatewayState.build_host_key(subsystem_nqn, None)):
                 self._remove_key(key)
@@ -1478,6 +1470,7 @@ class GatewayStateHandler:
                                               f"flag has changed. "
                                               f"The new flag is {new_trash_image}")
                             ns_trash_image_changed.append((key, new_trash_image))
+
                     elif key.startswith(GatewayState.HOST_PREFIX):
                         (should_process,
                          new_dhchap_key,

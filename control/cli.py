@@ -1823,7 +1823,8 @@ class GatewayClient:
                                     force=args.force,
                                     no_auto_visible=args.no_auto_visible,
                                     trash_image=args.rbd_trash_image_on_delete,
-                                    disable_auto_resize=args.disable_auto_resize)
+                                    disable_auto_resize=args.disable_auto_resize,
+                                    read_only=args.read_only)
         try:
             ret = self.stub.namespace_add(req)
         except Exception as ex:
@@ -2047,13 +2048,14 @@ class GatewayClient:
                         else:
                             visibility = "Restrictive"
 
-                    trash_msg = "\n(trash on delete)" if ns.trash_image else ""
-                    auto_resize_msg = "\n(disable auto resize)" if ns.disable_auto_resize else ""
+                    ro_msg = "Read-Only" if ns.read_only else "Read-Write"
+                    trash_msg = "\nTrash on delete" if ns.trash_image else ""
+                    auto_resize_msg = "\nDisable auto resize" if ns.disable_auto_resize else ""
                     namespaces_list.append([subsys_nqn,
                                             ns.nsid,
                                             break_string(ns.bdev_name, "-", 2),
-                                            f"{ns.rbd_pool_name}/{ns.rbd_image_name}{trash_msg}"
-                                            f"{auto_resize_msg}",
+                                            f"{ns.rbd_pool_name}/{ns.rbd_image_name}",
+                                            f"{ro_msg}{trash_msg}{auto_resize_msg}",
                                             self.format_size(ns.rbd_image_size),
                                             self.format_size(ns.block_size),
                                             break_string(ns.uuid, "-", 3),
@@ -2074,6 +2076,7 @@ class GatewayClient:
                                                        "NSID",
                                                        "Bdev\nName",
                                                        "RBD\nImage",
+                                                       "Mode",
                                                        "Image\nSize",
                                                        "Block\nSize",
                                                        "UUID",
@@ -2687,6 +2690,10 @@ class GatewayClient:
                  help="When the RBD image is resized, not not automatically resize the namespace",
                  action='store_true',
                  required=False),
+        argument("--read-only",
+                 help="Open the namespace in read-only mode",
+                 action='store_true',
+                 required=False),
     ]
     ns_del_args_list = ns_common_args + [
         argument("--nsid",
@@ -2746,7 +2753,7 @@ class GatewayClient:
                  choices=["yes", "no"],
                  required=True),
         argument("--force",
-                 help="Change visibility of namespace even if there hosts added "
+                 help="Change visibility of namespace even if there are hosts added "
                       "to it or active connections on the subsystem",
                  action='store_true',
                  required=False),

@@ -37,6 +37,8 @@ image22 = "mytestdevimage22"
 image23 = "mytestdevimage23"
 image24 = "mytestdevimage24"
 image25 = "mytestdevimage25"
+image26 = "mytestdevimage26"
+image27 = "mytestdevimage27"
 pool = "rbd"
 subsystem = "nqn.2016-06.io.spdk:cnode1"
 subsystem2 = "nqn.2016-06.io.spdk:cnode2"
@@ -50,6 +52,7 @@ subsystem9 = "nqn.2016-06.io.spdk:cnode9"
 subsystem10 = "nqn.2016-06.io.spdk:cnode10"
 subsystem11 = "nqn.2016-06.io.spdk:cnode11"
 subsystem12 = "nqn.2016-06.io.spdk:cnode12"
+subsystem13 = "nqn.2016-06.io.spdk:cnode13"
 subsystemX = "nqn.2016-06.io.spdk:cnodeX"
 discovery_nqn = "nqn.2014-08.org.nvmexpress.discovery"
 serial = "Ceph00000000000001"
@@ -2250,3 +2253,36 @@ class TestImageResize:
         assert '"nsid": 1,' in caplog.text
         assert f'"rbd_image_name": "{image25}",' in caplog.text
         assert '"disable_auto_resize": true,' in caplog.text
+
+
+class TestReadOnlyNamespace:
+    def test_read_only_namespace(self, caplog, gateway):
+        caplog.clear()
+        cli(["subsystem", "add", "--subsystem", subsystem13, "--no-group-append"])
+        assert f"Adding subsystem {subsystem13}: Successful" in caplog.text
+        caplog.clear()
+        cli(["namespace", "add", "--subsystem", subsystem13, "--rbd-pool", pool,
+             "--rbd-image", image26, "--size", "10MB",
+             "--rbd-create-image", "--read-only"])
+        assert f"Adding namespace 1 to {subsystem13}: Successful" in caplog.text
+        caplog.clear()
+        cli(["--format", "json", "namespace", "list", "--subsystem", subsystem13, "--nsid", "1"])
+        assert '"status": 0' in caplog.text
+        assert f'"subsystem_nqn": "{subsystem13}",' in caplog.text
+        assert '"nsid": 1,' in caplog.text
+        assert f'"rbd_image_name": "{image26}",' in caplog.text
+        assert '"read_only": true,' in caplog.text
+        assert '"read_only": false,' not in caplog.text
+        caplog.clear()
+        cli(["namespace", "add", "--subsystem", subsystem13, "--rbd-pool", pool,
+             "--rbd-image", image27, "--size", "10MB",
+             "--rbd-create-image"])
+        assert f"Adding namespace 2 to {subsystem13}: Successful" in caplog.text
+        caplog.clear()
+        cli(["--format", "json", "namespace", "list", "--subsystem", subsystem13, "--nsid", "2"])
+        assert '"status": 0' in caplog.text
+        assert f'"subsystem_nqn": "{subsystem13}",' in caplog.text
+        assert '"nsid": 2,' in caplog.text
+        assert f'"rbd_image_name": "{image27}",' in caplog.text
+        assert '"read_only": false,' in caplog.text
+        assert '"read_only": true,' not in caplog.text

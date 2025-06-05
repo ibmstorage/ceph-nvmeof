@@ -358,7 +358,8 @@ class SubsystemHostAuth:
 
 
 class NamespaceInfo:
-    def __init__(self, nsid, bdev, uuid, anagrpid, auto_visible, pool, image, trash_image):
+    def __init__(self, nsid, bdev, uuid, anagrpid, auto_visible, pool, image,
+                 trash_image, read_only):
         self.nsid = nsid
         self.bdev = bdev
         self.uuid = uuid
@@ -368,11 +369,13 @@ class NamespaceInfo:
         self.pool = pool
         self.image = image
         self.trash_image = trash_image
+        self.read_only = read_only
 
     def __str__(self):
         return f"nsid: {self.nsid}, bdev: {self.bdev}, uuid: {self.uuid}, " \
                f"auto_visible: {self.auto_visible}, anagrpid: {self.anagrpid}, " \
                f"pool: {self.pool}, image: {self.image}, trash_image: {self.trash_image}, " \
+               f"read_only: {self.read_only}, " \
                f"hosts: {self.host_list}"
 
     def empty(self) -> bool:
@@ -396,6 +399,9 @@ class NamespaceInfo:
     def set_visibility(self, auto_visible: bool):
         self.auto_visible = auto_visible
 
+    def set_read_only(self, read_only: bool):
+        self.read_only = read_only
+
     def is_host_in_namespace(self, host_nqn):
         return host_nqn in self.host_list
 
@@ -417,7 +423,7 @@ class NamespaceInfo:
 
 
 class NamespacesLocalList:
-    EMPTY_NAMESPACE = NamespaceInfo(None, None, None, 0, False, None, None, False)
+    EMPTY_NAMESPACE = NamespaceInfo(None, None, None, 0, False, None, None, False, False)
 
     def __init__(self):
         self.namespace_list = defaultdict(dict)
@@ -433,11 +439,12 @@ class NamespacesLocalList:
                 self.namespace_list.pop(nqn, None)
 
     def add_namespace(self, nqn, nsid, bdev, uuid, anagrpid, auto_visible,
-                      pool, image, trash_image):
+                      pool, image, trash_image, read_only):
         if not bdev:
             bdev = GatewayService.find_unique_bdev_name(uuid)
         self.namespace_list[nqn][nsid] = NamespaceInfo(nsid, bdev, uuid, anagrpid,
-                                                       auto_visible, pool, image, trash_image)
+                                                       auto_visible, pool, image, trash_image,
+                                                       read_only)
 
     def find_namespace(self, nqn, nsid, uuid=None) -> NamespaceInfo:
         if nqn not in self.namespace_list:
@@ -930,7 +937,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def create_bdev(self, anagrp: int, name, uuid, rbd_pool_name, rbd_image_name,
                     block_size, create_image, trash_image, rbd_image_size, disable_auto_resize,
-                    context, peer_msg=""):
+                    read_only, context, peer_msg=""):
         """Creates a bdev from an RBD image."""
 
         if create_image:
@@ -942,7 +949,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if trash_image:
             trsh_msg = "will trash the image on namespace delete, "
 
-        self.logger.info(f"Received request to create bdev {name} from"
+        if read_only:
+            ro_msg = "read only"
+        else:
+            ro_msg = "read write"
+
+        self.logger.info(f"Received request to create {ro_msg} bdev {name} from"
                          f" {rbd_pool_name}/{rbd_image_name} (size {rbd_image_size} bytes)"
                          f" with block size {block_size}, {cr_img_msg}, {trsh_msg}"
                          f"context={context}{peer_msg}")
@@ -1028,6 +1040,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 rbd_name=rbd_image_name,
                 block_size=block_size,
                 uuid=uuid,
+                read_only=read_only,
             )
             with self.shared_state_lock:
                 self.bdev_cluster[name] = cluster_name
@@ -1574,7 +1587,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         return errmsg, nqn
 
     def create_namespace(self, subsystem_nqn, bdev_name, nsid, anagrpid, uuid,
-                         auto_visible, rbd_pool, rbd_image_name, trash_image, context):
+                         auto_visible, rbd_pool, rbd_image_name, trash_image, read_only, context):
         """Adds a namespace to a subsystem."""
 
         assert context is None or self.omap_lock.write_locked_by_me(), \
@@ -1669,7 +1682,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                             bdev_name, uuid,
                                                             anagrpid, auto_visible,
                                                             rbd_pool, rbd_image_name,
-                                                            trash_image)
+                                                            trash_image, read_only)
             self.logger.debug(f"subsystem_add_ns: {nsid}")
             self.ana_grp_ns_load[anagrpid] += 1
             if anagrpid in self.ana_grp_subs_load:
@@ -1811,6 +1824,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                          f"{request.subsystem_nqn}, ana group {request.anagrpid}, "
                          f"no_auto_visible: {request.no_auto_visible}, "
                          f"disable_auto_resize: {request.disable_auto_resize}, "
+                         f"read_only: {request.read_only}, "
                          f"context: {context}{peer_msg}")
 
         if not request.uuid:
@@ -1881,7 +1895,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
             ret_bdev = self.create_bdev(anagrp, bdev_name, request.uuid, request.rbd_pool_name,
                                         request.rbd_image_name, request.block_size, create_image,
                                         request.trash_image, request.size,
-                                        request.disable_auto_resize, context, peer_msg)
+                                        request.disable_auto_resize, request.read_only,
+                                        context, peer_msg)
             if ret_bdev.status != 0:
                 errmsg = f"Failure adding namespace {nsid_msg}to {request.subsystem_nqn}: " \
                          f"{ret_bdev.error_message}"
@@ -1908,7 +1923,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                            request.nsid, anagrp, request.uuid,
                                            not request.no_auto_visible,
                                            ret_bdev.rbd_pool, ret_bdev.rbd_image_name,
-                                           ret_bdev.trash_image, context)
+                                           ret_bdev.trash_image, request.read_only, context)
             if ret_ns.status == 0 and request.nsid and ret_ns.nsid != request.nsid:
                 errmsg = f"Returned ID {ret_ns.nsid} differs from requested one {request.nsid}"
                 self.logger.error(errmsg)
@@ -1951,7 +1966,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                         pass
                     if ret_bdev.trash_image:
                         self.delete_rbd_image(ret_bdev.rbd_pool, ret_bdev.rbd_image_name)
-                    return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+                    return pb2.nsid_status(status=errno.EINVAL, error_message=errmsg)
 
         return pb2.nsid_status(status=0, error_message=os.strerror(0), nsid=ret_ns.nsid)
 
@@ -2087,7 +2102,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                     force=ns_entry["force"],
                                                     no_auto_visible=ns_entry["no_auto_visible"],
                                                     disable_auto_resize=ns_entry[
-                                                    "disable_auto_resize"])
+                                                    "disable_auto_resize"],
+                                                    read_only=ns_entry["read_only"])
                     json_req = json_format.MessageToJson(
                         add_req, preserving_proto_field_name=True,
                         including_default_value_fields=True)
@@ -2116,6 +2132,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             ns["disable_auto_resize"]
         except KeyError:
             ns["disable_auto_resize"] = False
+        try:
+            ns["read_only"]
+        except KeyError:
+            ns["read_only"] = False
 
     def namespace_change_load_balancing_group(self, request, context=None):
         """Changes a namespace load balancing group."""
@@ -2261,7 +2281,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                     force=ns_entry["force"],
                                                     no_auto_visible=not request.auto_visible,
                                                     disable_auto_resize=ns_entry[
-                                                    "disable_auto_resize"])
+                                                    "disable_auto_resize"],
+                                                    read_only=ns_entry["read_only"])
                     json_req = json_format.MessageToJson(
                         add_req, preserving_proto_field_name=True,
                         including_default_value_fields=True)
@@ -2370,7 +2391,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                     force=ns_entry["force"],
                                                     no_auto_visible=ns_entry["no_auto_visible"],
                                                     disable_auto_resize=ns_entry[
-                                                    "disable_auto_resize"])
+                                                    "disable_auto_resize"],
+                                                    read_only=ns_entry["read_only"])
                     json_req = json_format.MessageToJson(
                         add_req, preserving_proto_field_name=True,
                         including_default_value_fields=True)
@@ -2663,7 +2685,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                auto_visible=find_ret.auto_visible,
                                                hosts=find_ret.host_list,
                                                ns_subsystem_nqn=subsys_nqn,
-                                               trash_image=find_ret.trash_image)
+                                               trash_image=find_ret.trash_image,
+                                               read_only=find_ret.read_only)
                     with self.rpc_lock:
                         ns_bdev = self.get_bdev_info(bdev_name)
                     if ns_bdev is None:
