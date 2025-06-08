@@ -149,6 +149,7 @@ message namespace_add_req {
 	optional bool no_auto_visible = 11;
 	optional bool trash_image = 12;
 	optional bool disable_auto_resize = 13;
+	optional bool read_only = 14;
 }
 
 message namespace_resize_req {
@@ -559,6 +560,7 @@ message namespace_cli {
 	optional string ns_subsystem_nqn = 15;
 	optional bool trash_image = 16;
 	optional bool disable_auto_resize = 17;
+	optional bool read_only = 18;
 }
 
 message namespaces_info {
