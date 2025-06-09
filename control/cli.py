@@ -1463,7 +1463,7 @@ class GatewayClient:
 
         rc = 0
         ret_list = []
-        out_func, err_func, _ = self.get_output_functions(args)
+        out_func, err_func, wrn_func = self.get_output_functions(args)
         for one_host_nqn in args.host_nqn:
             req = pb2.remove_host_req(subsystem_nqn=args.subsystem, host_nqn=one_host_nqn)
 
@@ -1476,8 +1476,13 @@ class GatewayClient:
                     errmsg = f"Failure removing host {one_host_nqn} access to {args.subsystem}"
                 ret = pb2.req_status(status=errno.EINVAL, error_message=f"{errmsg}:\n{ex}")
 
-            if not rc:
+            # EBUSY is just a warning, so do not fail command
+            if not rc and ret.status and ret.status != errno.EBUSY:
                 rc = ret.status
+
+            orig_status = ret.status
+            if ret.status == errno.EBUSY:
+                ret.status = 0
 
             if args.format == "text" or args.format == "plain":
                 if ret.status == 0:
@@ -1486,6 +1491,10 @@ class GatewayClient:
                     else:
                         out_func(f"Removing host {one_host_nqn} access from "
                                  f"{args.subsystem}: Successful")
+                    if orig_status == errno.EBUSY:
+                        wrn_func(f"Host {one_host_nqn} is still connected to {args.subsystem}.\n"
+                                 f"Notice that re-connecting the host would fail unless it's "
+                                 f"re-added to the subsystem")
                 else:
                     err_func(f"{ret.error_message}")
             elif args.format == "json" or args.format == "yaml":

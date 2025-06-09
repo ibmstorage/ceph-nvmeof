@@ -3891,6 +3891,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
+        removed_host_is_connected = self.is_host_connected(request.subsystem_nqn, request.host_nqn)
+
         omap_lock = self.omap_lock.get_omap_lock_to_use(context)
         with omap_lock:
             try:
@@ -3954,7 +3956,15 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 self.remove_host_from_state(request.subsystem_nqn, request.host_nqn, context)
                 return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
-            return self.remove_host_from_state(request.subsystem_nqn, request.host_nqn, context)
+            rc = self.remove_host_from_state(request.subsystem_nqn, request.host_nqn, context)
+            if rc.status == 0 and removed_host_is_connected:
+                rc.status = errno.EBUSY
+                rc.error_message = f"Host {request.host_nqn} is still connected to " \
+                                   f"{request.subsystem_nqn}\n" \
+                                   f"Reconnecting the host would fail unless " \
+                                   f"it is re-added to the subsystem."
+                self.logger.warning(rc.error_message)
+            return rc
 
     def remove_host(self, request, context=None):
         return self.execute_grpc_function(self.remove_host_safe, request, context)
@@ -4243,6 +4253,17 @@ class GatewayService(pb2_grpc.GatewayServicer):
         return pb2.connections_info(status=0, error_message=os.strerror(0),
                                     subsystem_nqn=GatewayUtils.ALL_SUBSYSTEMS,
                                     connections=connections)
+
+    def is_host_connected(self, subsystem, hostnqn) -> bool:
+        if not hostnqn:
+            return False
+        if hostnqn == "*":
+            return False
+        connections = self.list_connection_for_one_subsystem(subsystem)
+        for one_conn in connections.connections:
+            if one_conn.connected and one_conn.nqn == hostnqn:
+                return True
+        return False
 
     def list_connection_for_one_subsystem(self, subsystem):
         try:
