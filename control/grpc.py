@@ -17,6 +17,7 @@ import errno
 import threading
 import hashlib
 import tempfile
+import time
 from pathlib import Path
 from typing import Iterator, Callable
 from collections import defaultdict
@@ -29,6 +30,7 @@ from binascii import crc32
 from spdk.rpc import spdk_get_version
 import spdk.rpc.bdev as rpc_bdev
 import spdk.rpc.nvmf as rpc_nvmf
+import spdk.rpc.notify as rpc_notify
 import spdk.rpc.keyring as rpc_keyring
 import spdk.rpc.log as rpc_log
 from spdk.rpc.client import JSONRPCException
@@ -87,6 +89,8 @@ class SubsystemHostAuth:
         self.host_dhchap_key = defaultdict(dict)
         self.host_psk_key = defaultdict(dict)
         self.host_nqn = defaultdict(set)
+        self.host_ka_timeout = defaultdict(set)
+        self.host_ka_timeout_lock = threading.Lock()
 
     def is_valid_psk(self, psk: str):
         PSK_CRC32_SIZE_BYTES = 4
@@ -247,6 +251,7 @@ class SubsystemHostAuth:
         self.subsys_allow_any_hosts.pop(subsys, None)
         self.subsys_dhchap_key.pop(subsys, None)
         self.host_nqn.pop(subsys, None)
+        self.host_ka_timeout.pop(subsys, None)
 
     def add_psk_host(self, subsys, host, key):
         if key:
@@ -320,6 +325,24 @@ class SubsystemHostAuth:
         for s in subsys_list:
             cnt += len(self.host_nqn[s])
         return cnt
+
+    def set_host_keepalive_timeout_disconnection(self, subsys, hostnqn):
+        with self.host_ka_timeout_lock:
+            self.host_ka_timeout[subsys].add(hostnqn)
+
+    def reset_host_keepalive_timeout_disconnection(self, subsys, hostnqn):
+        with self.host_ka_timeout_lock:
+            if subsys not in self.host_ka_timeout:
+                return
+            self.host_ka_timeout[subsys].discard(hostnqn)
+
+    def was_host_disconnected_due_to_keepalive_timeout(self, subsys, hostnqn) -> bool:
+        with self.host_ka_timeout_lock:
+            if subsys not in self.host_ka_timeout:
+                return False
+            if hostnqn not in self.host_ka_timeout[subsys]:
+                return False
+        return True
 
     def allow_any_host(self, subsys):
         self.subsys_allow_any_hosts[subsys] = True
@@ -558,6 +581,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     MAX_NAMESPACES_PER_SUBSYSTEM_DEFAULT = 256
     MAX_HOSTS_PER_SUBSYS_DEFAULT = 128
     MAX_HOSTS_DEFAULT = 2048
+    # notification name should be the same as in spdk/lib/nvmf/ctrlr.c
+    SPDK_HOST_KEEPALIVE_TIMEOUT_NOTIFICATION = "host_keepalive_timeout"
 
     def __init__(self, config: GatewayConfig, gateway_state: GatewayStateHandler,
                  rpc_lock, omap_lock: OmapLock, group_id: int, spdk_rpc_client,
@@ -670,7 +695,47 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self.spdk_version = None
         self.spdk_qos_timeslice = self.config.getint_with_default("spdk",
                                                                   "qos_timeslice_in_usecs", None)
+        spdk_notifications_interval = self.config.getint_with_default("spdk",
+                                                                      "notifications_interval",
+                                                                      60)
+        self.spdk_notifications_thread = None
+        if spdk_notifications_interval > 0:
+            self.spdk_notifications_thread = threading.Thread(target=self.read_spdk_notifications,
+                                                              name="SPDK Notifications",
+                                                              daemon=True,
+                                                              args=(spdk_notifications_interval,))
+            self.spdk_notifications_thread.start()
+
         self.set_gateway_exit_message = set_gateway_exit_message
+
+    def read_spdk_notifications(self, read_interval):
+        if read_interval <= 0:
+            return
+
+        spdk_notification_last_id_read = -1
+
+        while self.up_and_running:
+            with self.rpc_lock:
+                notifications = rpc_notify.notify_get_notifications(
+                    self.spdk_rpc_client, id=spdk_notification_last_id_read + 1)
+            if notifications:
+                self.logger.debug(f"spdk_notifications: {notifications}")
+                for n in notifications:
+                    try:
+                        spdk_notification_last_id_read = n["id"]
+                        if n["type"] == GatewayService.SPDK_HOST_KEEPALIVE_TIMEOUT_NOTIFICATION:
+                            n_ctx = n["ctx"]
+                            (hostnqn,
+                             subsysnqn,
+                             timeout) = n_ctx.split(GatewayState.OMAP_KEY_DELIMITER)
+                            self.logger.warning(f"Host {hostnqn} was disconnected from subsystem "
+                                                f"{subsysnqn} due to keep alive timeout after "
+                                                f"{timeout} milliseconds")
+                            self.host_info.set_host_keepalive_timeout_disconnection(subsysnqn,
+                                                                                    hostnqn)
+                    except Exception:
+                        self.logger.exception(f"Invalid notification: {n}")
+            time.sleep(read_interval)
 
     def get_directories_for_key_file(self, key_type: str,
                                      subsysnqn: str, create_dir: bool = False) -> []:
@@ -3927,6 +3992,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     self.remove_all_host_key_files(request.subsystem_nqn, request.host_nqn)
                     self.remove_all_host_keys_from_keyring(request.subsystem_nqn, request.host_nqn)
                     self.host_info.remove_host_nqn(request.subsystem_nqn, request.host_nqn)
+                    self.host_info.reset_host_keepalive_timeout_disconnection(
+                        request.subsystem_nqn, request.host_nqn)
             except Exception as ex:
                 if request.host_nqn == "*":
                     self.logger.exception(all_host_failure_prefix)
@@ -4180,7 +4247,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to list hosts for "
-                         f"{request.subsystem}, context: {context}{peer_msg}")
+                         f"{request.subsystem}, clear_alerts: {request.clear_alerts}, "
+                         f"context: {context}{peer_msg}")
         try:
             ret = rpc_nvmf.nvmf_get_subsystems(self.spdk_rpc_client, nqn=request.subsystem)
             self.logger.debug(f"list_hosts: {ret}")
@@ -4213,8 +4281,15 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     host_nqn = h["nqn"]
                     psk = self.host_info.is_psk_host(request.subsystem, host_nqn)
                     dhchap = self.host_info.is_dhchap_host(request.subsystem, host_nqn)
-                    one_host = pb2.host(nqn=host_nqn, use_psk=psk, use_dhchap=dhchap)
+                    was_ka_timeout = \
+                        self.host_info.was_host_disconnected_due_to_keepalive_timeout(
+                            request.subsystem, host_nqn)
+                    one_host = pb2.host(nqn=host_nqn, use_psk=psk, use_dhchap=dhchap,
+                                        disconnected_due_to_keepalive_timeout=was_ka_timeout)
                     hosts.append(one_host)
+                    if was_ka_timeout and request.clear_alerts:
+                        self.host_info.reset_host_keepalive_timeout_disconnection(
+                            request.subsystem, host_nqn)
                 break
             except Exception:
                 self.logger.exception(f"{s=} parse error")
@@ -4389,13 +4464,17 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     trtype = "TCP"
                 if not adrfam:
                     adrfam = "ipv4"
+                was_ka_timeout = \
+                    self.host_info.was_host_disconnected_due_to_keepalive_timeout(
+                        subsystem, hostnqn)
                 one_conn = pb2.connection(nqn=hostnqn, connected=True,
                                           traddr=traddr, trsvcid=trsvcid,
                                           trtype=trtype, adrfam=adrfam,
                                           qpairs_count=conn["num_io_qpairs"],
                                           controller_id=conn["cntlid"],
                                           secure=secure, use_psk=psk, use_dhchap=dhchap,
-                                          subsystem=subsystem)
+                                          subsystem=subsystem,
+                                          disconnected_due_to_keepalive_timeout=was_ka_timeout)
                 connections.append(one_conn)
                 if hostnqn in host_nqns:
                     host_nqns.remove(hostnqn)
@@ -4408,9 +4487,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
             dhchap = False
             psk = self.host_info.is_psk_host(subsystem, nqn)
             dhchap = self.host_info.is_dhchap_host(subsystem, nqn)
+            was_ka_timeout = \
+                self.host_info.was_host_disconnected_due_to_keepalive_timeout(
+                    subsystem, nqn)
             one_conn = pb2.connection(nqn=nqn, connected=False, traddr="<n/a>", trsvcid=0,
                                       qpairs_count=-1, controller_id=-1,
-                                      use_psk=psk, use_dhchap=dhchap, subsystem=subsystem)
+                                      use_psk=psk, use_dhchap=dhchap, subsystem=subsystem,
+                                      disconnected_due_to_keepalive_timeout=was_ka_timeout)
             connections.append(one_conn)
 
         return pb2.connections_info(status=0, error_message=os.strerror(0),
