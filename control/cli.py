@@ -1567,7 +1567,8 @@ class GatewayClient:
 
         hosts_info = None
         try:
-            hosts_info = self.stub.list_hosts(pb2.list_hosts_req(subsystem=args.subsystem))
+            hosts_info = self.stub.list_hosts(
+                pb2.list_hosts_req(subsystem=args.subsystem, clear_alerts=args.clear_alerts))
         except Exception as ex:
             hosts_info = pb2.hosts_info(status=errno.EINVAL,
                                         error_message=f"Failure listing hosts:\n{ex}", hosts=[])
@@ -1577,17 +1578,25 @@ class GatewayClient:
                 hosts_list = []
                 if hosts_info.allow_any_host:
                     hosts_list.append(["Any host", "n/a"])
+                has_timeout = False
+                for h in hosts_info.hosts:
+                    if h.disconnected_due_to_keepalive_timeout:
+                        has_timeout = True
+                        break
                 for h in hosts_info.hosts:
                     use_psk = "Yes" if h.use_psk else "No"
                     use_dhchap = "Yes" if h.use_dhchap else "No"
-                    one_host = [h.nqn, use_psk, use_dhchap]
+                    ka_timeout = "Yes" if h.disconnected_due_to_keepalive_timeout else "No"
+                    timeout_col = [ka_timeout] if has_timeout else []
+                    one_host = [h.nqn, use_psk, use_dhchap] + timeout_col
                     hosts_list.append(one_host)
                 if len(hosts_list) > 0:
                     if args.format == "text":
                         table_format = "fancy_grid"
                     else:
                         table_format = "plain"
-                    headers_list = ["Host NQN", "Uses PSK", "Uses DHCHAP"]
+                    timeout_col = ["Keepalive\nTimeout"] if has_timeout else []
+                    headers_list = ["Host NQN", "Uses PSK", "Uses DHCHAP"] + timeout_col
                     hosts_out = tabulate(hosts_list,
                                          headers=headers_list,
                                          tablefmt=table_format, stralign="center")
@@ -1641,6 +1650,10 @@ class GatewayClient:
                  required=True),
     ]
     host_list_args = host_common_args + [
+        argument("--clear-alerts",
+                 help="Clear any host alert signal after getting its value",
+                 action='store_true',
+                 required=False),
     ]
     host_change_key_args = host_common_args + [
         argument("--host-nqn",
@@ -1700,6 +1713,11 @@ class GatewayClient:
         if args.format == "text" or args.format == "plain":
             if connections_info.status == 0:
                 connections_list = []
+                has_timeout = False
+                for conn in connections_info.connections:
+                    if conn.disconnected_due_to_keepalive_timeout:
+                        has_timeout = True
+                        break
                 for conn in connections_info.connections:
                     conn_secure = "<n/a>"
                     conn_psk = "Yes" if conn.use_psk else "No"
@@ -1712,6 +1730,8 @@ class GatewayClient:
                     subsys_col = []
                     if connections_info.subsystem_nqn == GatewayUtils.ALL_SUBSYSTEMS:
                         subsys_col = [conn.subsystem]
+                    ka_timeout = "Yes" if conn.disconnected_due_to_keepalive_timeout else "No"
+                    timeout_col = [ka_timeout] if has_timeout else []
                     qp_text = conn.qpairs_count if conn.connected else "<n/a>"
                     ctrl_text = conn.controller_id if conn.connected else "<n/a>"
                     connections_list.append(subsys_col + [conn.nqn,
@@ -1721,7 +1741,7 @@ class GatewayClient:
                                                           ctrl_text,
                                                           conn_secure,
                                                           conn_psk,
-                                                          conn_dhchap])
+                                                          conn_dhchap] + timeout_col)
                 subsys_text = connections_info.subsystem_nqn
                 if len(connections_list) > 0:
                     if args.format == "text":
@@ -1731,6 +1751,7 @@ class GatewayClient:
                     subsys_col = []
                     if connections_info.subsystem_nqn == GatewayUtils.ALL_SUBSYSTEMS:
                         subsys_col = ["Subsystem"]
+                    timeout_col = ["Keepalive\nTimeout"] if has_timeout else []
                     connections_out = tabulate(connections_list,
                                                headers=subsys_col + ["Host NQN",
                                                                      "Address",
@@ -1739,7 +1760,7 @@ class GatewayClient:
                                                                      "Controller ID",
                                                                      "Secure",
                                                                      "Uses\nPSK",
-                                                                     "Uses\nDHCHAP"],
+                                                                     "Uses\nDHCHAP"] + timeout_col,
                                                tablefmt=table_format)
                     if connections_info.subsystem_nqn == GatewayUtils.ALL_SUBSYSTEMS:
                         subsys_text = "all subsystems"
