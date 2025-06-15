@@ -996,24 +996,33 @@ class GatewayClient:
 
         return subsystems.status
 
+    def subsystem_del_key(self, args):
+        """Delete subsystem's inband authentication key."""
+
+        args.dhchap_key = None
+        return self.subsystem_change_key(args)
+
     def subsystem_change_key(self, args):
         """Change subsystem's inband authentication key."""
 
         out_func, err_func, _ = self.get_output_functions(args)
 
-        if args.dhchap_key == "":
+        cmd = "deleting" if args.dhchap_key is None else "changing"
+        cmd2 = "Deleting" if args.dhchap_key is None else "Changing"
+
+        if args.dhchap_key is not None and args.dhchap_key == "":
             self.cli.parser.error("DH-HMAC-CHAP key can't be empty")
 
         req = pb2.change_subsystem_key_req(subsystem_nqn=args.subsystem, dhchap_key=args.dhchap_key)
         try:
             ret = self.stub.change_subsystem_key(req)
         except Exception as ex:
-            errmsg = f"Failure changing key for subsystem {args.subsystem}"
+            errmsg = f"Failure {cmd} key for subsystem {args.subsystem}"
             ret = pb2.req_status(status=errno.EINVAL, error_message=f"{errmsg}:\n{ex}")
 
         if args.format == "text" or args.format == "plain":
             if ret.status == 0:
-                out_func(f"Changing key for subsystem {args.subsystem}: Successful")
+                out_func(f"{cmd2} key for subsystem {args.subsystem}: Successful")
             else:
                 err_func(f"{ret.error_message}")
         elif args.format == "json" or args.format == "yaml":
@@ -1083,7 +1092,13 @@ class GatewayClient:
         argument("--dhchap-key",
                  "-k",
                  help="Subsystem DH-HMAC-CHAP key",
-                 required=False),
+                 required=True),
+    ]
+    subsys_del_key_args = [
+        argument("--subsystem",
+                 "-n",
+                 help="Subsystem NQN",
+                 required=True),
     ]
     subsystem_actions = []
     subsystem_actions.append({"name": "add",
@@ -1097,7 +1112,10 @@ class GatewayClient:
                               "help": "List subsystems"})
     subsystem_actions.append({"name": "change_key",
                               "args": subsys_change_key_args,
-                              "help": "Change subsystem key"})
+                              "help": "Change subsystem inband authentication key"})
+    subsystem_actions.append({"name": "del_key",
+                              "args": subsys_del_key_args,
+                              "help": "Delete subsystem inband authentication key"})
     subsystem_choices = get_actions(subsystem_actions)
 
     @cli.cmd(subsystem_actions)
@@ -1111,6 +1129,8 @@ class GatewayClient:
             return self.subsystem_list(args)
         elif args.action == "change_key":
             return self.subsystem_change_key(args)
+        elif args.action == "del_key":
+            return self.subsystem_del_key(args)
         if not args.action:
             self.cli.parser.error(f"missing action for subsystem command (choose "
                                   f"from {GatewayClient.subsystem_choices})")
@@ -1397,12 +1417,6 @@ class GatewayClient:
             if len(args.host_nqn) > 1:
                 self.cli.parser.error("Can't have more than one host NQN when PSK keys are used")
 
-        if args.dhchap_key == "":
-            self.cli.parser.error("DH-HMAC-CHAP key can't be empty")
-
-        if args.psk == "":
-            self.cli.parser.error("PSK key can't be empty")
-
         if args.dhchap_key:
             if len(args.host_nqn) > 1:
                 self.cli.parser.error("Can't have more than one host NQN when "
@@ -1516,31 +1530,37 @@ class GatewayClient:
 
         return rc
 
+    def host_del_key(self, args):
+        """Delete host's inband authentication key."""
+
+        args.dhchap_key = None
+        return self.host_change_key(args)
+
     def host_change_key(self, args):
-        """Change host's inband authentication keys."""
+        """Change host's inband authentication key."""
 
         out_func, err_func, _ = self.get_output_functions(args)
 
-        if args.dhchap_key == "":
+        cmd = "delete" if args.dhchap_key is None else "change"
+        cmd2 = "deleting" if args.dhchap_key is None else "changing"
+        cmd3 = "Deleting" if args.dhchap_key is None else "Changing"
+        if args.dhchap_key is not None and args.dhchap_key == "":
             self.cli.parser.error("DH-HMAC-CHAP key can't be empty")
 
         if args.host_nqn == "*":
-            self.cli.parser.error("Can't change keys for host NQN '*', please use a real NQN")
-
-        if args.dhchap_key == "":
-            self.cli.parser.error("DH-HMAC-CHAP key can't be empty")
+            self.cli.parser.error(f"Can't {cmd} key for host NQN '*', please use a real NQN")
 
         req = pb2.change_host_key_req(subsystem_nqn=args.subsystem, host_nqn=args.host_nqn,
                                       dhchap_key=args.dhchap_key)
         try:
             ret = self.stub.change_host_key(req)
         except Exception as ex:
-            errmsg = f"Failure changing key for host {args.host_nqn} on subsystem {args.subsystem}"
+            errmsg = f"Failure {cmd2} key for host {args.host_nqn} on subsystem {args.subsystem}"
             ret = pb2.req_status(status=errno.EINVAL, error_message=f"{errmsg}:\n{ex}")
 
         if args.format == "text" or args.format == "plain":
             if ret.status == 0:
-                out_func(f"Changing key for host {args.host_nqn} on subsystem "
+                out_func(f"{cmd3} key for host {args.host_nqn} on subsystem "
                          f"{args.subsystem}: Successful")
             else:
                 err_func(ret.error_message)
@@ -1663,7 +1683,13 @@ class GatewayClient:
         argument("--dhchap-key",
                  "-k",
                  help="Host DH-HMAC-CHAP key",
-                 required=False),
+                 required=True),
+    ]
+    host_del_key_args = host_common_args + [
+        argument("--host-nqn",
+                 "-t",
+                 help="Host NQN",
+                 required=True),
     ]
     host_actions = []
     host_actions.append({"name": "add",
@@ -1677,7 +1703,10 @@ class GatewayClient:
                          "help": "List subsystem's host access"})
     host_actions.append({"name": "change_key",
                          "args": host_change_key_args,
-                         "help": "Change host's inband authentication keys"})
+                         "help": "Change host's inband authentication key"})
+    host_actions.append({"name": "del_key",
+                         "args": host_del_key_args,
+                         "help": "Delete host's inband authentication key"})
     host_choices = get_actions(host_actions)
 
     @cli.cmd(host_actions)
@@ -1691,6 +1720,8 @@ class GatewayClient:
             return self.host_list(args)
         elif args.action == "change_key":
             return self.host_change_key(args)
+        elif args.action == "del_key":
+            return self.host_del_key(args)
         if not args.action:
             self.cli.parser.error(f"missing action for host command "
                                   f"(choose from {GatewayClient.host_choices})")
