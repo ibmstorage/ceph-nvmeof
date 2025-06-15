@@ -4040,10 +4040,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
         """Changes host's inband authentication key."""
 
         peer_msg = self.get_peer_message(context)
-        failure_prefix = f"Failure changing DH-HMAC-CHAP key for host {request.host_nqn} " \
+        cmd = "change" if request.dhchap_key else "delete"
+        cmd2 = "changing" if request.dhchap_key else "deleting"
+        failure_prefix = f"Failure {cmd2} DH-HMAC-CHAP key for host {request.host_nqn} " \
                          f"on subsystem {request.subsystem_nqn}"
         self.logger.info(
-            f"Received request to change inband authentication key for host {request.host_nqn} "
+            f"Received request to {cmd} inband authentication key for host {request.host_nqn} "
             f"on subsystem {request.subsystem_nqn}, context: {context}{peer_msg}")
 
         if request.host_nqn == "*":
@@ -5146,11 +5148,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
         return self.execute_grpc_function(self.list_subsystems_safe, request, context)
 
     def change_subsystem_key_safe(self, request, context):
-        """Change subsystem key."""
+        """Change subsystem key inband authentication key."""
         peer_msg = self.get_peer_message(context)
-        failure_prefix = f"Failure changing DH-HMAC-CHAP key for subsystem {request.subsystem_nqn}"
+        cmd = "change" if request.dhchap_key else "delete"
+        cmd2 = "changing" if request.dhchap_key else "deleting"
+        failure_prefix = f"Failure {cmd2} DH-HMAC-CHAP key for subsystem {request.subsystem_nqn}"
         self.logger.info(
-            f"Received request to change inband authentication key for subsystem "
+            f"Received request to {cmd} inband authentication key for subsystem "
             f"{request.subsystem_nqn}, context: {context}{peer_msg}")
 
         if not GatewayState.is_key_element_valid(request.subsystem_nqn):
