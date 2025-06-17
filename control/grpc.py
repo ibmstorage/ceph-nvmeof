@@ -853,8 +853,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         return key_name
 
     def remove_key_from_keyring(self, key_type: str, subsysnqn: str, hostnqn: str) -> None:
-        assert self.rpc_lock.locked(), "RPC is unlocked when calling remove_key_from_keyring()"
         key_name = GatewayService.construct_key_name_for_keyring(subsysnqn, hostnqn, key_type)
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling keyring_file_remove_key()"
         try:
             rpc_keyring.keyring_file_remove_key(self.spdk_rpc_client, key_name)
         except Exception:
@@ -1095,6 +1095,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                     f"will get resized in case of an image resize:\n{ex}")
 
         cluster_name = None
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling bdev_rbd_create()"
         try:
             cluster_name = self.cluster_allocator.get_cluster(anagrp)
             bdev_name = rpc_bdev.bdev_rbd_create(
@@ -1271,6 +1272,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def create_subsystem_safe(self, request, context):
         """Creates a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling create_subsystem_safe()"
         create_subsystem_error_prefix = f"Failure creating subsystem {request.subsystem_nqn}"
         peer_msg = self.get_peer_message(context)
 
@@ -1535,6 +1537,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def delete_subsystem_safe(self, request, context):
         """Deletes a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling delete_subsystem_safe()"
         delete_subsystem_error_prefix = f"Failure deleting subsystem {request.subsystem_nqn}"
 
         ret = False
@@ -1655,6 +1658,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                          auto_visible, rbd_pool, rbd_image_name, trash_image, read_only, context):
         """Adds a namespace to a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling create_namespace()"
         assert context is None or self.omap_lock.write_locked_by_me(), \
             f"OMAP is unlocked when calling create_namespace()\n" \
             f"in thread: {threading.get_native_id()}. Locked by: " \
@@ -1787,6 +1791,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         """Sets ana state for this gateway."""
         self.logger.info(f"Received request to set ana states {ana_info.states}, {peer_msg}")
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling set_ana_state_safe()"
         inaccessible_ana_groups = {}
         awaited_cluster_contexts = set()
         # Iterate over nqn_ana_states in ana_info
@@ -1874,6 +1879,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_add_safe(self, request, context):
         """Adds a namespace to a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_add_safe()"
         if not request.subsystem_nqn:
             errmsg = "Failure adding namespace, missing subsystem NQN"
             self.logger.error(errmsg)
@@ -2042,6 +2048,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_change_load_balancing_group_safe(self, request, context):
         """Changes a namespace load balancing group."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling namespace_change_load_balancing_group_safe()"
         grps_list = []
         peer_msg = self.get_peer_message(context)
         change_lb_group_failure_prefix = f"Failure changing load balancing group for namespace " \
@@ -2209,6 +2217,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def subsystem_has_connections(self, subsys: str) -> bool:
         assert subsys, "Subsystem NQN is empty"
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling subsystem_has_connections()"
         try:
             ctrl_ret = rpc_nvmf.nvmf_subsystem_get_controllers(self.spdk_rpc_client, nqn=subsys)
         except Exception:
@@ -2220,6 +2229,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_change_visibility_safe(self, request, context):
         """Changes namespace visibility."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling namespace_change_visibility_safe()"
         peer_msg = self.get_peer_message(context)
         failure_prefix = f"Failure changing visibility for namespace {request.nsid} " \
                          f"in {request.subsystem_nqn}"
@@ -2368,6 +2379,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_set_rbd_trash_image_safe(self, request, context=None):
         """Changes RBD trash image flag for a namespace."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling namespace_set_rbd_trash_image_safe()"
         peer_msg = self.get_peer_message(context)
         failure_prefix = f"Failure setting RBD trash image flag for namespace {request.nsid} " \
                          f"in {request.subsystem_nqn}"
@@ -2601,6 +2614,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def remove_namespace(self, subsystem_nqn, nsid, context):
         """Removes a namespace from a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling remove_namespace()"
         assert context is None or self.omap_lock.write_locked_by_me(), \
             f"OMAP is unlocked when calling remove_namespace()\n" \
             f"in thread: {threading.get_native_id()}. Locked by: " \
@@ -2924,6 +2938,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_set_qos_limits_safe(self, request, context):
         """Set namespace's qos limits."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling namespace_set_qos_limits_safe()"
         max_mb_per_second = int(0xffffffffffffffff / (1024 * 1024))
 
         failure_prefix = f"Failure setting QOS limits for namespace {request.nsid} " \
@@ -3098,6 +3114,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_resize_safe(self, request, context=None):
         """Resize a namespace."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_resize_safe()"
         failure_prefix = f"Failure resizing namespace {request.nsid} on {request.subsystem_nqn}"
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to resize namespace {request.nsid} on "
@@ -3169,6 +3186,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_delete_safe(self, request, context):
         """Delete a namespace."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_delete_safe()"
         if not request.nsid:
             errmsg = "Failure deleting namespace, missing ID"
             self.logger.error(errmsg)
@@ -3258,6 +3276,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_add_host_safe(self, request, context):
         """Add a host to a namespace."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_add_host_safe()"
         peer_msg = self.get_peer_message(context)
         failure_prefix = f"Failure adding host {request.host_nqn} to namespace " \
                          f"{request.nsid} on {request.subsystem_nqn}"
@@ -3391,6 +3410,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_delete_host_safe(self, request, context):
         """Delete a host from a namespace."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_delete_host_safe()"
         peer_msg = self.get_peer_message(context)
         failure_prefix = f"Failure deleting host {request.host_nqn} from namespace " \
                          f"{request.nsid} on {request.subsystem_nqn}"
@@ -3563,6 +3583,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def _add_key_to_keyring(self, keytype, filename, keyname):
         if not keyname or not filename:
             return
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling _add_key_to_keyring()"
         keys = rpc_keyring.keyring_get_keys(self.spdk_rpc_client)
         old_filename = None
         for one_key in keys:
@@ -3594,6 +3615,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def add_host_safe(self, request, context):
         """Adds a host to a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling add_host_safe()"
         peer_msg = self.get_peer_message(context)
         if request.host_nqn == "*":
             self.logger.info(f"Received request to allow any host access for "
@@ -3926,6 +3948,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def remove_host_safe(self, request, context):
         """Removes a host from a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling remove_host_safe()"
         peer_msg = self.get_peer_message(context)
         all_host_failure_prefix = f"Failure disabling open host access to {request.subsystem_nqn}"
         host_failure_prefix = f"Failure removing host {request.host_nqn} access " \
@@ -4039,6 +4062,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def change_host_key_safe(self, request, context):
         """Changes host's inband authentication key."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling change_host_key_safe()"
         peer_msg = self.get_peer_message(context)
         cmd = "change" if request.dhchap_key else "delete"
         cmd2 = "changing" if request.dhchap_key else "deleting"
@@ -4247,6 +4271,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def list_hosts_safe(self, request, context):
         """List hosts."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling list_hosts_safe()"
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to list hosts for "
                          f"{request.subsystem}, clear_alerts: {request.clear_alerts}, "
@@ -4343,6 +4368,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         return False
 
     def list_connection_for_one_subsystem(self, subsystem):
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling list_connection_for_one_subsystem()"
         try:
             qpair_ret = rpc_nvmf.nvmf_subsystem_get_qpairs(self.spdk_rpc_client, nqn=subsystem)
             self.logger.debug(f"list_connections get_qpairs: {qpair_ret}")
@@ -4507,6 +4534,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def create_listener_safe(self, request, context):
         """Creates a listener for a subsystem at a given IP/Port."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling create_listener_safe()"
         ret = True
         create_listener_error_prefix = f"Failure adding {request.nqn} listener at " \
                                        f"{request.traddr}:{request.trsvcid}"
@@ -4769,6 +4797,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def delete_listener_safe(self, request, context):
         """Deletes a listener from a subsystem at a given IP/Port."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling delete_listener_safe()"
         ret = True
         esc_traddr = GatewayUtils.escape_address_if_ipv6(request.traddr)
         delete_listener_error_prefix = f"Failed to delete listener {esc_traddr}:" \
@@ -4945,6 +4974,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def show_gateway_listeners_info_safe(self, request, context):
         """Show gateway's listeners info."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling show_gateway_listeners_info_safe()"
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to show gateway listeners info for "
                          f"{request.subsystem_nqn}, context: {context}{peer_msg}")
@@ -5038,6 +5069,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def list_subsystems_safe(self, request, context):
         """List subsystems."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling list_subsystems_safe()"
         peer_msg = self.get_peer_message(context)
         log_level = logging.INFO if context else logging.DEBUG
         if request.subsystem_nqn:
@@ -5276,6 +5308,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def get_spdk_nvmf_log_flags_and_level_safe(self, request, context):
         """Gets spdk nvmf log flags, log level and log print level"""
+
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling get_spdk_nvmf_log_flags_and_level_safe()"
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to get SPDK log flags and level, "
                          f"all_log_flags: {request.all_log_flags}{peer_msg}")
@@ -5320,6 +5355,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         ret_log = False
         ret_print = False
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling set_spdk_nvmf_logs_safe()"
         peer_msg = self.get_peer_message(context)
         if request.HasField("log_level"):
             log_level = GatewayEnumUtils.get_key_from_value(pb2.LogLevel, request.log_level)
@@ -5383,6 +5419,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def disable_spdk_nvmf_logs_safe(self, request, context):
         """Disables spdk nvmf logs"""
+
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling disable_spdk_nvmf_logs_safe()"
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to disable SPDK logs, "
                          f"extra: {request.extra_log_flags}{peer_msg}")
@@ -5436,6 +5474,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def get_gateway_info_safe(self, request, context):
         """Get gateway's info"""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling get_gateway_info_safe()"
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to get gateway's info{peer_msg}")
         gw_version_string = os.getenv("NVMEOF_VERSION")
@@ -5500,10 +5539,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def get_gateway_info(self, request, context=None):
         """Get gateway's info"""
+
         return self.execute_grpc_function(self.get_gateway_info_safe, request, context)
 
     def get_gateway_log_level(self, request, context=None):
         """Get gateway's log level"""
+
         peer_msg = self.get_peer_message(context)
         try:
             log_level = GatewayEnumUtils.get_key_from_value(pb2.GwLogLevel, self.logger.level)
