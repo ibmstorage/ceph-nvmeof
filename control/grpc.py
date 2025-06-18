@@ -4236,6 +4236,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
+        # If this is not set the subsystem was not created yet
+        if request.nqn not in self.subsys_serial:
+            errmsg = f"{create_listener_error_prefix}: can't find subsystem {request.nqn}"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
+
         if not GatewayState.is_key_element_valid(request.host_name):
             errmsg = f"{create_listener_error_prefix}: Host name " \
                      f"\"{request.host_name}\" contains invalid characters"
