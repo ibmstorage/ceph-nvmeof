@@ -422,6 +422,8 @@ class GatewayServer:
             self.logger.info("Using SPDK discovery service")
             return
 
+        assert self.gateway_rpc is None, \
+            "A call to SPDK without a lock when the gateway is running"
         try:
             rpc_nvmf.nvmf_delete_subsystem(self.spdk_rpc_client, GatewayUtils.DISCOVERY_NQN)
         except Exception:
