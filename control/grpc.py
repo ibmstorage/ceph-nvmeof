@@ -554,6 +554,78 @@ class NamespacesLocalList:
         return ns_list
 
 
+class ImageIdentification:
+    DELIMITER = GatewayState.OMAP_KEY_DELIMITER
+
+    def __init__(self, group_name, subsys, uuid):
+        group_name_to_use = None
+        if group_name is not None:
+            group_name_to_use = group_name.replace(ImageIdentification.DELIMITER, "-")
+        self.group_name = group_name_to_use
+        self.subsys = subsys
+        self.uuid = uuid
+
+    def __str__(self):
+        return f"{self.group_name}{ImageIdentification.DELIMITER}{self.subsys}" \
+               f"{ImageIdentification.DELIMITER}{self.uuid}"
+
+    def empty(self) -> bool:
+        if self.group_name is not None:
+            return False
+        if self.subsys is not None:
+            return False
+        if self.uuid is not None:
+            return False
+        return True
+
+    def is_same_group(self, group_name: str) -> bool:
+        if group_name is None:
+            return self.group_name is None
+        if not group_name:
+            return not self.group_name
+        group_name_to_use = group_name.replace(ImageIdentification.DELIMITER, "-")
+        return group_name_to_use == self.group_name
+
+    def is_same_uuid(self, uuid: str) -> bool:
+        if uuid is None:
+            return self.uuid is None
+        if not uuid:
+            return not self.uuid
+        return uuid == self.uuid
+
+    def is_same_image_id(self, img_id) -> bool:
+        if self.group_name != img_id.group_name:
+            return False
+        if self.subsys != img_id.subsys:
+            return False
+        if self.uuid != img_id.uuid:
+            return False
+        return True
+
+    @classmethod
+    def parse(cls, img_ids: str) -> list:
+        parts = img_ids.split(ImageIdentification.DELIMITER)
+        ids_list = []
+        while parts:
+            group_name, subsys, uuid = parts[:3]
+            ids_list.append(ImageIdentification(group_name, subsys, uuid))
+            parts = parts[3:]
+
+        return ids_list
+
+    @classmethod
+    def list2string(cls, img_ids: list) -> str:
+        if not img_ids:
+            return ""
+
+        result = ""
+        for one_img in img_ids:
+            result += f"{one_img}, "
+
+        result = "[" + result.removesuffix(", ") + "]"
+        return result
+
+
 class GatewayService(pb2_grpc.GatewayServicer):
     """Implements gateway service interface.
 
@@ -999,6 +1071,89 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                   error_message="Shutting down server")
 
         return rc
+
+    def get_image_identification(self, rbd_pool: str, rbd_image: str) -> list[ImageIdentification]:
+        image_id_metadata = None
+        if not self.ceph_utils.does_image_exist(rbd_pool, rbd_image):
+            self.logger.debug(f"Image {rbd_pool}/{rbd_image} not found")
+            return []
+        try:
+            image_id_metadata = self.ceph_utils.get_image_metadata(
+                rbd_pool, rbd_image, CephUtils.METADATA_KEY_IMAGE_ID)
+        except KeyError:
+            pass
+        except Exception:
+            self.logger.exception(f"Error getting image identification for image "
+                                  f"{rbd_pool}/{rbd_image}")
+        if not image_id_metadata:
+            return []
+
+        try:
+            img_ids_list = ImageIdentification.parse(image_id_metadata)
+        except Exception:
+            self.logger.exception(f"Error parsing {image_id_metadata}")
+            return []
+
+        self.logger.debug(f"Found image ids {ImageIdentification.list2string(img_ids_list)} "
+                          f"for {rbd_pool}/{rbd_image}")
+
+        return img_ids_list
+
+    def set_image_identification(self, rbd_pool: str, rbd_image: str, img_id: ImageIdentification):
+        assert img_id, "Can't set an empty image id"
+
+        img_id_value = ""
+        img_ids_list = self.get_image_identification(rbd_pool, rbd_image)
+        for one_id in img_ids_list:
+            if one_id.is_same_image_id(img_id):
+                self.logger.debug(f"Image id {img_id} already included in "
+                                  f"{ImageIdentification.list2string(img_ids_list)}")
+                return
+            img_id_value += f"{one_id}{ImageIdentification.DELIMITER}"
+
+        img_id_value += f"{img_id}"
+
+        try:
+            self.ceph_utils.set_image_metadata(rbd_pool, rbd_image,
+                                               CephUtils.METADATA_KEY_IMAGE_ID,
+                                               img_id_value)
+            self.logger.debug(f"set image id {img_id_value} for {rbd_pool}/{rbd_image}")
+        except Exception:
+            self.logger.exception(f"Error setting image identification {img_id_value} for "
+                                  f"{rbd_pool}{rbd_image}")
+
+    def delete_image_identification(self, rbd_pool: str,
+                                    rbd_image: str, img_id: ImageIdentification):
+        assert img_id, "Can't delete an empty image id"
+
+        img_id_value = ""
+        img_ids_list = self.get_image_identification(rbd_pool, rbd_image)
+        for one_id in img_ids_list:
+            if one_id.is_same_image_id(img_id):
+                self.logger.debug(f"Image id {img_id} was found in "
+                                  f"{ImageIdentification.list2string(img_ids_list)}")
+                continue
+            img_id_value += f"{one_id}{ImageIdentification.DELIMITER}"
+
+        img_id_value = img_id_value.removesuffix(ImageIdentification.DELIMITER)
+
+        if not img_id_value:
+            try:
+                self.ceph_utils.remove_image_metadata(rbd_pool, rbd_image,
+                                                      CephUtils.METADATA_KEY_IMAGE_ID)
+                self.logger.debug(f"remove all image ids for {rbd_pool}/{rbd_image}")
+            except Exception:
+                self.logger.exception(f"Error removing image identifications for "
+                                      f"{rbd_pool}/{rbd_image}")
+        else:
+            try:
+                self.ceph_utils.set_image_metadata(rbd_pool, rbd_image,
+                                                   CephUtils.METADATA_KEY_IMAGE_ID,
+                                                   img_id_value)
+                self.logger.debug(f"set image id {img_id_value} for {rbd_pool}/{rbd_image}")
+            except Exception:
+                self.logger.exception(f"Error setting image identification {img_id_value} for "
+                                      f"{rbd_pool}{rbd_image}")
 
     def create_bdev(self, anagrp: int, name, uuid, rbd_pool_name, rbd_image_name,
                     block_size, create_image, trash_image, rbd_image_size, disable_auto_resize,
@@ -1631,11 +1786,27 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 self.logger.warning(f"Will continue deleting {request.subsystem_nqn} anyway")
         return self.execute_grpc_function(self.delete_subsystem_safe, request, context)
 
-    def check_if_image_used(self, pool_name, image_name):
+    def check_if_image_used(self, pool_name, image_name, uuid):
         """Check if image is used by any other namespace."""
 
         errmsg = ""
         nqn = None
+
+        img_ids_list = self.get_image_identification(pool_name, image_name)
+        for img_id in img_ids_list:
+            if not img_id.empty():
+                if not img_id.is_same_group(self.gateway_group):
+                    grp_txt = f", group {img_id.group_name}" if img_id.group_name else ""
+                    errmsg = f"RBD image {pool_name}/{image_name} is already used by a namespace " \
+                             f"in subsystem {img_id.subsys}{grp_txt}"
+                    return errmsg, img_id.subsys
+                if not img_id.is_same_uuid(uuid):
+                    uuid_txt = f"with UUID {img_id.uuid} " if img_id.uuid else ""
+                    errmsg = f"RBD image {pool_name}/{image_name} is already used by a namespace " \
+                             f"{uuid_txt}" \
+                             f"in subsystem {img_id.subsys}, group {img_id.group_name}"
+                    return errmsg, img_id.subsys
+
         state = self.gateway_state.local.get_state()
         for key, val in state.items():
             if not key.startswith(self.gateway_state.local.NAMESPACE_PREFIX):
@@ -1932,7 +2103,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         with omap_lock:
             if context:
                 errmsg, ns_nqn = self.check_if_image_used(request.rbd_pool_name,
-                                                          request.rbd_image_name)
+                                                          request.rbd_image_name,
+                                                          request.uuid)
                 if errmsg and ns_nqn:
                     if request.force:
                         self.logger.warning(f"{errmsg}, will continue as the \"force\" "
@@ -2038,6 +2210,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     if ret_bdev.trash_image:
                         self.delete_rbd_image(ret_bdev.rbd_pool, ret_bdev.rbd_image_name)
                     return pb2.nsid_status(status=errno.EINVAL, error_message=errmsg)
+
+            img_id = ImageIdentification(self.gateway_group,
+                                         request.subsystem_nqn,
+                                         request.uuid)
+            self.set_image_identification(request.rbd_pool_name,
+                                          request.rbd_image_name,
+                                          img_id)
 
         return pb2.nsid_status(status=0, error_message=os.strerror(0), nsid=ret_ns.nsid)
 
@@ -2643,7 +2822,6 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 subsystem_nqn, nsid)
             self.ana_grp_ns_load[anagrpid] -= 1
             self.ana_grp_subs_load[anagrpid][subsystem_nqn] -= 1
-
         except Exception as ex:
             self.logger.exception(namespace_failure_prefix)
             errmsg = f"{namespace_failure_prefix}:\n{ex}"
@@ -3254,18 +3432,24 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 return ret
 
             self.remove_namespace_from_state(request.subsystem_nqn, request.nsid, context)
-            self.subsystem_nsid_bdev_and_uuid.remove_namespace(request.subsystem_nqn, request.nsid)
-            if bdev_name:
-                ret_del = self.delete_bdev(bdev_name, peer_msg=peer_msg)
-                if ret_del.status != 0:
-                    errmsg = f"Failure deleting namespace {request.nsid} from " \
-                             f"{request.subsystem_nqn}: {ret_del.error_message}"
-                    self.logger.error(errmsg)
-                    if find_ret.trash_image:
-                        self.delete_rbd_image(rbd_pool, rbd_image_name)
-                    return pb2.nsid_status(status=ret_del.status, error_message=errmsg)
-            if find_ret.trash_image:
-                self.delete_rbd_image(rbd_pool, rbd_image_name)
+
+        self.delete_image_identification(find_ret.pool, find_ret.image,
+                                         ImageIdentification(self.gateway_group,
+                                                             request.subsystem_nqn,
+                                                             find_ret.uuid))
+        self.subsystem_nsid_bdev_and_uuid.remove_namespace(request.subsystem_nqn, request.nsid)
+        if bdev_name:
+            ret_del = self.delete_bdev(bdev_name, peer_msg=peer_msg)
+            if ret_del.status != 0:
+                errmsg = f"Failure deleting namespace {request.nsid} from " \
+                         f"{request.subsystem_nqn}: {ret_del.error_message}"
+                self.logger.error(errmsg)
+                if find_ret.trash_image:
+                    self.delete_rbd_image(rbd_pool, rbd_image_name)
+                return pb2.nsid_status(status=ret_del.status, error_message=errmsg)
+
+        if find_ret.trash_image:
+            self.delete_rbd_image(rbd_pool, rbd_image_name)
 
         return pb2.req_status(status=0, error_message=os.strerror(0))
 
