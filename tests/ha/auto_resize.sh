@@ -32,10 +32,15 @@ ns_list=$(cephnvmf_func --output stdio --format json namespace list --subsystem 
 [[ `echo $ns_list | jq -r '.namespaces[2]'` == "null" ]]
 
 echo "ℹ️  check RBD metadata"
-rbd_meta=`make -s exec SVC=ceph OPTS=-T CMD="rbd image-meta list -p ${RBD_POOL} ${RBD_IMAGE_NAME}" 2> /dev/null | grep NVME_GATEWAY_AUTO_RESIZE`
-rbd_meta2=`make -s exec SVC=ceph OPTS=-T CMD="rbd image-meta list -p ${RBD_POOL} ${RBD_IMAGE_NAME}2" 2> /dev/null`
-[[ `echo -n $rbd_meta` == "NVME_GATEWAY_AUTO_RESIZE no" ]]
-[[ `echo -n $rbd_meta2` == "There are 0 metadata on this image." ]]
+rbd_meta=`make -s exec SVC=ceph OPTS=-T CMD="rbd image-meta get -p ${RBD_POOL} ${RBD_IMAGE_NAME} NVME_GATEWAY_AUTO_RESIZE" 2> /dev/null`
+[[ "$rbd_meta" == "no" ]]
+set +e
+make -s exec SVC=ceph OPTS=-T CMD="rbd image-meta get -p ${RBD_POOL} ${RBD_IMAGE_NAME}2 NVME_GATEWAY_AUTO_RESIZE" 2> /dev/null
+if [[ $? -eq 0 ]]; then
+    echo "Shouldn't have NVME_GATEWAY_AUTO_RESIZE in metadata for ${RBD_POOL}/${RBD_IMAGE_NAME}2"
+    exit 1
+fi
+set -e
 
 echo "ℹ️  resize RBD images"
 make -s exec SVC=ceph OPTS=-T CMD="rbd resize -p ${RBD_POOL} ${RBD_IMAGE_NAME} --size 20M"
@@ -109,10 +114,15 @@ ns_list=$(cephnvmf_func --output stdio --format json namespace list --subsystem 
 [[ `echo $ns_list | jq -r '.namespaces[2]'` == "null" ]]
 
 echo "ℹ️  check RBD metadata"
-rbd_meta=`make -s exec SVC=ceph OPTS=-T CMD="rbd image-meta list -p ${RBD_POOL} ${RBD_IMAGE_NAME}" 2> /dev/null`
-rbd_meta2=`make -s exec SVC=ceph OPTS=-T CMD="rbd image-meta list -p ${RBD_POOL} ${RBD_IMAGE_NAME}2" 2> /dev/null | grep NVME_GATEWAY_AUTO_RESIZE`
-[[ `echo -n $rbd_meta` == "There are 0 metadata on this image." ]]
-[[ `echo -n $rbd_meta2` == "NVME_GATEWAY_AUTO_RESIZE no" ]]
+set +e
+make -s exec SVC=ceph OPTS=-T CMD="rbd image-meta get -p ${RBD_POOL} ${RBD_IMAGE_NAME} NVME_GATEWAY_AUTO_RESIZE" 2> /dev/null
+if [[ $? -eq 0 ]]; then
+    echo "Shouldn't have NVME_GATEWAY_AUTO_RESIZE in metadata for ${RBD_POOL}/${RBD_IMAGE_NAME}"
+    exit 1
+fi
+set -e
+rbd_meta2=`make -s exec SVC=ceph OPTS=-T CMD="rbd image-meta get -p ${RBD_POOL} ${RBD_IMAGE_NAME}2 NVME_GATEWAY_AUTO_RESIZE" 2> /dev/null`
+[[ "$rbd_meta2" == "no" ]]
 
 echo "ℹ️  resize RBD images again"
 make -s exec SVC=ceph OPTS=-T CMD="rbd resize -p ${RBD_POOL} ${RBD_IMAGE_NAME} --size 40M"
