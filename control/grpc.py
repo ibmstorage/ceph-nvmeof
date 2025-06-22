@@ -3824,6 +3824,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            pref = all_host_failure_prefix if request.host_nqn == "*" else host_failure_prefix
+            errmsg = f"{pref}: can't find subsystem {request.subsystem_nqn}"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
+
         if request.host_nqn == "*":
             if self.host_info.does_subsystem_have_dhchap_key(request.subsystem_nqn):
                 errmsg = f"{all_host_failure_prefix}: Can't allow any host access " \
