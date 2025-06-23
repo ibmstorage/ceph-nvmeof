@@ -2280,6 +2280,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             ns["no_auto_visible"]
         except KeyError:
             ns["no_auto_visible"] = False
+        try:
+            ns["force"]
+        except KeyError:
+            ns["force"] = False
 
     def namespace_change_load_balancing_group(self, request, context=None):
         """Changes a namespace load balancing group."""
