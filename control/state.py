@@ -934,7 +934,6 @@ class OmapGatewayState(GatewayState):
                 self.ioctx.operate_write_op(write_op, self.omap_name)
             self.version = version_update
             self.logger.info(f"omap_key generated: {key}, OMAP version: {version_update}")
-            self.logger.debug(f"XXX omap_key: {key}, value: {val}")
         except Exception:
             self.logger.exception("Unable to add key to OMAP, exiting!")
             raise
