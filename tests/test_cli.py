@@ -1350,6 +1350,14 @@ class TestCreate:
         assert "error: the following arguments are required: --host-nqn/-t" in caplog.text
         assert rc == 2
 
+    def test_add_host_subsys_not_found(self, caplog):
+        caplog.clear()
+        cli(["host", "add", "--subsystem", "junk", "--host-nqn", host1])
+        assert f"Failure adding host {host1} to junk: can't find subsystem junk" in caplog.text
+        caplog.clear()
+        cli(["host", "add", "--subsystem", "junk", "--host-nqn", "*"])
+        assert "Failure allowing open host access to junk: can't find subsystem junk" in caplog.text
+
     @pytest.mark.parametrize("host", host_list)
     def test_add_host(self, caplog, host):
         caplog.clear()
