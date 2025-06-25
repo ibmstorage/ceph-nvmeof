@@ -2388,6 +2388,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             ns["read_only"]
         except KeyError:
             ns["read_only"] = False
+        try:
+            ns["force"]
+        except KeyError:
+            ns["force"] = False
 
     def namespace_change_load_balancing_group(self, request, context=None):
         """Changes a namespace load balancing group."""
