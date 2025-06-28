@@ -1,4 +1,4 @@
-# syntax = docker/dockerfile:1.4
+# syntax = docker/dockerfile:1.17
 # vim: syntax=dockerfile
 
 ARG DNF_OPTS="\

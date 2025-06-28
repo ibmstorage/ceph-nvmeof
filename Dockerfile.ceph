@@ -1,4 +1,4 @@
-# syntax = docker/dockerfile:1.4
+# syntax = docker/dockerfile:1.17
 # vim: syntax=dockerfile
 FROM quay.io/centos/centos:stream9-minimal AS build
 
