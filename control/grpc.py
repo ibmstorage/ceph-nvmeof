@@ -2936,10 +2936,18 @@ class GatewayService(pb2_grpc.GatewayServicer):
                         pass
                     find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(subsys_nqn,
                                                                                 nsid)
+                    lb_group_configured = 0
+                    cluster_name = None
                     if find_ret.empty():
                         self.logger.warning(f"Can't find info of namesapce {nsid} in "
-                                            f"{subsys_nqn}. Visibility status "
+                                            f"{subsys_nqn}. Some fields value "
                                             f"will be inaccurate")
+                    else:
+                        lb_group_configured = find_ret.anagrpid
+                        try:
+                            cluster_name = self.bdev_cluster[find_ret.bdev]
+                        except KeyError:
+                            cluster_name = None
 
                     one_ns = pb2.namespace_cli(nsid=nsid,
                                                bdev_name=bdev_name,
@@ -2949,7 +2957,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                hosts=find_ret.host_list,
                                                ns_subsystem_nqn=subsys_nqn,
                                                trash_image=find_ret.trash_image,
-                                               read_only=find_ret.read_only)
+                                               read_only=find_ret.read_only,
+                                               configured_load_balancing_group=lb_group_configured,
+                                               cluster_name=cluster_name)
                     with self.rpc_lock:
                         ns_bdev = self.get_bdev_info(bdev_name)
                     if ns_bdev is None:

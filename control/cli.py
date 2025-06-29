@@ -2095,10 +2095,17 @@ class GatewayClient:
                         err_func(f"Failure listing namespace with UUID {args.uuid}: "
                                  f"Got namespace {ns.uuid} instead")
                         return errno.ENODEV
-                    if ns.load_balancing_group == 0:
+                    if not ns.load_balancing_group:
                         lb_group = "<n/a>"
                     else:
                         lb_group = str(ns.load_balancing_group)
+                    if not ns.configured_load_balancing_group:
+                        configured_lb_group = "<n/a>"
+                    else:
+                        configured_lb_group = str(ns.configured_load_balancing_group)
+                        if configured_lb_group != lb_group and args.output != "stdio":
+                            configured_lb_group = "\x1b[7m" + configured_lb_group + "\x1b[27m"
+                    cluster_name = "<n/a>" if not ns.cluster_name else ns.cluster_name
                     if ns.auto_visible:
                         visibility = "All Hosts"
                     else:
@@ -2112,6 +2119,10 @@ class GatewayClient:
                     ro_msg = "Read-Only" if ns.read_only else "Read-Write"
                     trash_msg = "\nTrash on delete" if ns.trash_image else ""
                     auto_resize_msg = "\nDisable auto resize" if ns.disable_auto_resize else ""
+                    verbose_info = []
+                    if args.verbose:
+                        verbose_info = [cluster_name]
+                        lb_group += f" ({configured_lb_group})"
                     namespaces_list.append([subsys_nqn,
                                             ns.nsid,
                                             break_string(ns.bdev_name, "-", 2),
@@ -2125,13 +2136,19 @@ class GatewayClient:
                                             self.get_qos_limit_str_value(ns.rw_ios_per_second),
                                             self.get_qos_limit_str_value(ns.rw_mbytes_per_second),
                                             self.get_qos_limit_str_value(ns.r_mbytes_per_second),
-                                            self.get_qos_limit_str_value(ns.w_mbytes_per_second)])
+                                            self.get_qos_limit_str_value(
+                                                ns.w_mbytes_per_second)] + verbose_info)
 
                 if len(namespaces_list) > 0:
                     if args.format == "text":
                         table_format = "fancy_grid"
                     else:
                         table_format = "plain"
+                    verbose_headers = []
+                    configured_txt = ""
+                    if args.verbose:
+                        verbose_headers = ["Cluster\nName"]
+                        configured_txt = "\n(Configured)"
                     namespaces_out = tabulate(namespaces_list,
                                               headers=["NQN",
                                                        "NSID",
@@ -2141,12 +2158,12 @@ class GatewayClient:
                                                        "Image\nSize",
                                                        "Block\nSize",
                                                        "UUID",
-                                                       "Load\nBalancing\nGroup",
+                                                       "Load\nBalancing\nGroup" + configured_txt,
                                                        "Visibility",
                                                        "R/W IOs\nper\nsecond",
                                                        "R/W MBs\nper\nsecond",
                                                        "Read MBs\nper\nsecond",
-                                                       "Write MBs\nper\nsecond"],
+                                                       "Write MBs\nper\nsecond"] + verbose_headers,
                                               tablefmt=table_format)
                     if args.nsid:
                         prefix = f"Namespace {args.nsid} in"
