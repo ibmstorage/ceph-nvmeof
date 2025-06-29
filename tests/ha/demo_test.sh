@@ -24,7 +24,7 @@ function demo_test_psk()
     make demosecurepsk OPTS=-T HOSTNQN="${NQN}host" HOSTNQN2="${NQN}host2" HOSTNQN3="${NQN}host3" NVMEOF_IO_PORT2=${port2} PSKKEY2=${PSK_KEY3}
 
     echo "ℹ️  verify PSK key files removal"
-    psk_key_list=`make -s exec SVC=nvmeof OPTS=-T CMD="/usr/local/bin/spdk_rpc -s /var/tmp/spdk.sock keyring_get_keys"`
+    psk_key_list=`make -s exec SVC=nvmeof OPTS=-T CMD="/usr/local/bin/spdk-rpc -s /var/tmp/spdk.sock keyring_get_keys"`
     [[ `echo $psk_key_list | jq -r '.[0].removed'` == "true" ]]
     [[ `echo $psk_key_list | jq -r '.[1].removed'` == "true" ]]
     [[ `echo $psk_key_list | jq -r '.[2].removed'` == "null" ]]
@@ -788,7 +788,7 @@ function demo_bdevperf_dhchap()
     [[ "${controllers}" == "[]" ]]
 
     echo "ℹ️  keep keys before change"
-    dhchap_key_list_pre_change=`make -s exec SVC=nvmeof OPTS=-T CMD="/usr/local/bin/spdk_rpc -s /var/tmp/spdk.sock keyring_get_keys"`
+    dhchap_key_list_pre_change=`make -s exec SVC=nvmeof OPTS=-T CMD="/usr/local/bin/spdk-rpc -s /var/tmp/spdk.sock keyring_get_keys"`
     path1_pre=`echo ${dhchap_key_list_pre_change} | jq -r '.[0].path'`
     path2_pre=`echo ${dhchap_key_list_pre_change} | jq -r '.[1].path'`
     path3_pre=`echo ${dhchap_key_list_pre_change} | jq -r '.[2].path'`
@@ -980,7 +980,7 @@ function demo_bdevperf_dhchap()
     [[ `echo $conns3 | jq -r '.connections[4]'` == "null" ]]
 
     echo "ℹ️  verify DHCHAP key files removal"
-    dhchap_key_list=`make -s exec SVC=nvmeof OPTS=-T CMD="/usr/local/bin/spdk_rpc -s /var/tmp/spdk.sock keyring_get_keys"`
+    dhchap_key_list=`make -s exec SVC=nvmeof OPTS=-T CMD="/usr/local/bin/spdk-rpc -s /var/tmp/spdk.sock keyring_get_keys"`
     path1=`echo ${dhchap_key_list} | jq -r '.[0].path'`
     path2=`echo ${dhchap_key_list} | jq -r '.[1].path'`
     path3=`echo ${dhchap_key_list} | jq -r '.[2].path'`
@@ -1062,7 +1062,7 @@ function demo_bdevperf_dhchap()
     make exec SVC=nvmeof OPTS=-T CMD="test ! -d ${subsys_dir}"
     cephnvmf_func subsystem del --subsystem ${NQN}2 --force
     make exec SVC=nvmeof OPTS=-T CMD="test ! -d ${subsys2_dir}"
-    dhchap_key_list=`make -s exec SVC=nvmeof OPTS=-T CMD="/usr/local/bin/spdk_rpc -s /var/tmp/spdk.sock keyring_get_keys"`
+    dhchap_key_list=`make -s exec SVC=nvmeof OPTS=-T CMD="/usr/local/bin/spdk-rpc -s /var/tmp/spdk.sock keyring_get_keys"`
     [[ `echo $dhchap_key_list | jq -r '.[0]'` == "null" ]]
 
     echo "ℹ️  use invalid encryption key"
