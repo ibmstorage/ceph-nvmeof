@@ -62,6 +62,7 @@ git checkout $ATOM_SHA
 # Build atom images based on the cloned repo
 sudo docker build -t nvmeof_atom:$ATOM_SHA .
 
+#TODO: remove the line --skip-reservations-basic-test when https://github.com/ceph/ceph-nvmeof/pull/1260 is merged
 set -x
 if [ "$NIGHTLY" != "nightly" ]; then
     check_cluster_busy "$BUSY_FILE" "$ACTION_URL"
@@ -103,6 +104,7 @@ if [ "$NIGHTLY" != "nightly" ]; then
         --dont-power-off-cloud-vms \
         --skip-lb-group-change-test \
         --skip-gw-failover-latency-test \
+        --skip-reservations-basic-test \
         --ibm-cloud-key=nokey \
         --github-nvmeof-token=nokey \
         --env=m7
@@ -145,6 +147,7 @@ else
         --dont-use-hugepages \
         --skip-lb-group-change-test \
         --skip-gw-failover-latency-test \
+        --skip-reservations-basic-test \
         --skip-block-list-test \
         --skip-multi-hosts-conn-test \
         --ibm-cloud-key=nokey \
