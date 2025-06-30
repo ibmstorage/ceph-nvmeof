@@ -2022,7 +2022,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
                         self.logger.debug(f"set_ana_state nvmf_subsystem_listener_set_ana_state "
                                           f"{nqn=} {listener=} {ana_state=} {grp_id=}")
-                        (adrfam, traddr, trsvcid, secure) = listener
+                        (adrfam, traddr, trsvcid, secure, active) = listener
+                        if not active:
+                            continue
                         ret = rpc_nvmf.nvmf_subsystem_listener_set_ana_state(
                             self.spdk_rpc_client,
                             nqn=nqn,
@@ -2934,10 +2936,18 @@ class GatewayService(pb2_grpc.GatewayServicer):
                         pass
                     find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(subsys_nqn,
                                                                                 nsid)
+                    lb_group_configured = 0
+                    cluster_name = None
                     if find_ret.empty():
                         self.logger.warning(f"Can't find info of namesapce {nsid} in "
-                                            f"{subsys_nqn}. Visibility status "
+                                            f"{subsys_nqn}. Some fields value "
                                             f"will be inaccurate")
+                    else:
+                        lb_group_configured = find_ret.anagrpid
+                        try:
+                            cluster_name = self.bdev_cluster[find_ret.bdev]
+                        except KeyError:
+                            cluster_name = None
 
                     one_ns = pb2.namespace_cli(nsid=nsid,
                                                bdev_name=bdev_name,
@@ -2947,7 +2957,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                hosts=find_ret.host_list,
                                                ns_subsystem_nqn=subsys_nqn,
                                                trash_image=find_ret.trash_image,
-                                               read_only=find_ret.read_only)
+                                               read_only=find_ret.read_only,
+                                               configured_load_balancing_group=lb_group_configured,
+                                               cluster_name=cluster_name)
                     with self.rpc_lock:
                         ns_bdev = self.get_bdev_info(bdev_name)
                     if ns_bdev is None:
@@ -3912,7 +3924,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
             secure = False
             try:
                 for listener in self.subsystem_listeners[request.subsystem_nqn]:
-                    (_, _, _, secure) = listener
+                    (_, _, _, secure, _) = listener
                     if secure:
                         errmsg = f"{all_host_failure_prefix}: Can't allow open host access " \
                                  f"on a subsystem with secure listeners"
@@ -4681,9 +4693,11 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 dhchap = self.host_info.is_dhchap_host(subsystem, hostnqn)
 
                 if subsystem in self.subsystem_listeners:
-                    lstnr = (adrfam, traddr, trsvcid, True)
-                    if lstnr in self.subsystem_listeners[subsystem]:
-                        secure = True
+                    for active in [False, True]:
+                        lstnr = (adrfam, traddr, trsvcid, True, active)
+                        if lstnr in self.subsystem_listeners[subsystem]:
+                            secure = True
+                            break
 
                 if not trtype:
                     trtype = "TCP"
@@ -4813,12 +4827,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
             if request.host_name == self.host_name:
                 try:
                     for secure in [False, True]:
-                        lstnr = (adrfam, traddr, request.trsvcid, secure)
-                        if lstnr in self.subsystem_listeners[request.nqn]:
-                            errmsg = f"{create_listener_error_prefix}: Subsystem already " \
-                                     f"listens on address {request.traddr}:{request.trsvcid}"
-                            self.logger.error(errmsg)
-                            return pb2.req_status(status=errno.EEXIST, error_message=errmsg)
+                        for active in [False, True]:
+                            lstnr = (adrfam, traddr, request.trsvcid, secure, active)
+                            if lstnr in self.subsystem_listeners[request.nqn]:
+                                errmsg = f"{create_listener_error_prefix}: Subsystem already " \
+                                         f"listens on address {request.traddr}:{request.trsvcid}"
+                                self.logger.error(errmsg)
+                                return pb2.req_status(status=errno.EEXIST, error_message=errmsg)
 
                     if self.verify_listener_ip:
                         nics = NICS(self.logger, True)
@@ -4834,9 +4849,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     ret = rpc_nvmf.nvmf_subsystem_add_listener(self.spdk_rpc_client,
                                                                **add_listener_args)
                     self.logger.debug(f"create_listener: {ret}")
-                    self.subsystem_listeners[request.nqn].add((adrfam, traddr,
-                                                               request.trsvcid, request.secure))
-                    listener_created = True
+                    listener_created = ret
                 except Exception as ex:
                     self.logger.exception(create_listener_error_prefix)
                     errmsg = f"{create_listener_error_prefix}:\n{ex}"
@@ -4858,6 +4871,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 return pb2.req_status(status=errno.EINVAL,
                                       error_message=create_listener_error_prefix)
 
+            self.subsystem_listeners[request.nqn].add((adrfam, traddr,
+                                                       request.trsvcid, request.secure,
+                                                       request.host_name == self.host_name))
             if listener_created:
                 try:
                     self.logger.debug(f"create_listener nvmf_subsystem_listener_set_ana_state "
@@ -5054,36 +5070,39 @@ class GatewayService(pb2_grpc.GatewayServicer):
         with omap_lock:
             try:
                 is_there = False
+                is_active = False
                 if request.nqn in self.subsystem_listeners:
                     for secur in [False, True]:
-                        lstnr = (adrfam, traddr, request.trsvcid, secur)
-                        if lstnr in self.subsystem_listeners[request.nqn]:
-                            is_there = True
+                        if is_there:
                             break
+                        for active in [False, True]:
+                            lstnr = (adrfam, traddr, request.trsvcid, secur, active)
+                            if lstnr in self.subsystem_listeners[request.nqn]:
+                                is_there = True
+                                is_active = active
+                                break
                 if not is_there:
                     errmsg = f"{delete_listener_error_prefix}: Listener not found"
                     self.logger.error(errmsg)
                     return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
                 if request.host_name == self.host_name or request.force:
-                    ret = rpc_nvmf.nvmf_subsystem_remove_listener(
-                        self.spdk_rpc_client,
-                        nqn=request.nqn,
-                        trtype="TCP",
-                        traddr=traddr,
-                        trsvcid=str(request.trsvcid),
-                        adrfam=adrfam,
-                    )
-                    self.logger.debug(f"delete_listener: {ret}")
+                    if is_active:
+                        ret = rpc_nvmf.nvmf_subsystem_remove_listener(
+                            self.spdk_rpc_client,
+                            nqn=request.nqn,
+                            trtype="TCP",
+                            traddr=traddr,
+                            trsvcid=str(request.trsvcid),
+                            adrfam=adrfam,
+                        )
+                        self.logger.debug(f"delete_listener: {ret}")
                     if request.nqn in self.subsystem_listeners:
-                        if (adrfam, traddr, request.trsvcid,
-                                False) in self.subsystem_listeners[request.nqn]:
-                            self.subsystem_listeners[request.nqn].remove((adrfam, traddr,
-                                                                          request.trsvcid, False))
-                        if (adrfam, traddr, request.trsvcid,
-                                True) in self.subsystem_listeners[request.nqn]:
-                            self.subsystem_listeners[request.nqn].remove((adrfam, traddr,
-                                                                          request.trsvcid, True))
+                        for secur in [False, True]:
+                            for active in [False, True]:
+                                lstnr = (adrfam, traddr, request.trsvcid, secur, active)
+                                if lstnr in self.subsystem_listeners[request.nqn]:
+                                    self.subsystem_listeners[request.nqn].remove(lstnr)
                 else:
                     errmsg = f"{delete_listener_error_prefix}: Gateway's host name must " \
                              f"match current host ({self.host_name}). You can continue to " \
@@ -5205,12 +5224,15 @@ class GatewayService(pb2_grpc.GatewayServicer):
             try:
                 secure = False
                 if request.subsystem_nqn in self.subsystem_listeners:
-                    local_lstnr = (lstnr["address"]["adrfam"].lower(),
-                                   lstnr["address"]["traddr"],
-                                   int(lstnr["address"]["trsvcid"]),
-                                   True)
-                    if local_lstnr in self.subsystem_listeners[request.subsystem_nqn]:
-                        secure = True
+                    for active in [False, True]:
+                        local_lstnr = (lstnr["address"]["adrfam"].lower(),
+                                       lstnr["address"]["traddr"],
+                                       int(lstnr["address"]["trsvcid"]),
+                                       True,
+                                       active)
+                        if local_lstnr in self.subsystem_listeners[request.subsystem_nqn]:
+                            secure = True
+                            break
                 lstnr_part = pb2.listener_info(host_name=self.host_name,
                                                trtype=lstnr["address"]["trtype"].upper(),
                                                adrfam=lstnr["address"]["adrfam"].lower(),

@@ -564,6 +564,8 @@ message namespace_cli {
 	optional bool trash_image = 16;
 	optional bool disable_auto_resize = 17;
 	optional bool read_only = 18;
+        optional string cluster_name = 19;
+        optional uint32 configured_load_balancing_group = 20;
 }
 
 message namespaces_info {
