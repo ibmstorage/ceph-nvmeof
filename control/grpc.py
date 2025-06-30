@@ -5170,12 +5170,26 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     secure = False
                     if "secure" in listener:
                         secure = listener["secure"]
+                    active = False
+                    if request.subsystem in self.subsystem_listeners:
+                        lookfor = (listener["adrfam"].lower(), listener["traddr"],
+                                   int(listener["trsvcid"]), secure, False)
+                        if lookfor in self.subsystem_listeners[request.subsystem]:
+                            active = False
+                        else:
+                            lookfor = (listener["adrfam"].lower(), listener["traddr"],
+                                       int(listener["trsvcid"]), secure, True)
+                            if lookfor in self.subsystem_listeners[request.subsystem]:
+                                active = True
+                            else:
+                                self.logger.warning(f"Can't find listener "
+                                                    f"{listener} in local list")
                     one_listener = pb2.listener_info(host_name=listener["host_name"],
                                                      trtype="TCP",
                                                      adrfam=listener["adrfam"],
                                                      traddr=listener["traddr"],
                                                      trsvcid=listener["trsvcid"],
-                                                     secure=secure)
+                                                     secure=secure, active=active)
                     listeners.append(one_listener)
                 except Exception:
                     self.logger.exception(f"Got exception while parsing {val}")
@@ -5222,23 +5236,32 @@ class GatewayService(pb2_grpc.GatewayServicer):
         gw_listeners = []
         for lstnr in ret:
             try:
-                secure = False
+                is_secure = False
+                is_active = False
+                found = False
                 if request.subsystem_nqn in self.subsystem_listeners:
-                    for active in [False, True]:
-                        local_lstnr = (lstnr["address"]["adrfam"].lower(),
-                                       lstnr["address"]["traddr"],
-                                       int(lstnr["address"]["trsvcid"]),
-                                       True,
-                                       active)
-                        if local_lstnr in self.subsystem_listeners[request.subsystem_nqn]:
-                            secure = True
+                    for secure in [False, True]:
+                        if found:
                             break
+                        for active in [False, True]:
+                            local_lstnr = (lstnr["address"]["adrfam"].lower(),
+                                           lstnr["address"]["traddr"],
+                                           int(lstnr["address"]["trsvcid"]),
+                                           secure,
+                                           active)
+                            if local_lstnr in self.subsystem_listeners[request.subsystem_nqn]:
+                                found = True
+                                is_secure = secure
+                                is_active = active
+                                break
+                if not found:
+                    self.logger.warning(f"Can't find listener {lstnr} in local list")
                 lstnr_part = pb2.listener_info(host_name=self.host_name,
                                                trtype=lstnr["address"]["trtype"].upper(),
                                                adrfam=lstnr["address"]["adrfam"].lower(),
                                                traddr=lstnr["address"]["traddr"],
                                                trsvcid=int(lstnr["address"]["trsvcid"]),
-                                               secure=secure)
+                                               secure=is_secure, active=is_active)
             except Exception:
                 self.logger.exception(f"Error getting address from {lstnr}")
                 continue
