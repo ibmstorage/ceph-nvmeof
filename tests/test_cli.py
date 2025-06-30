@@ -1440,13 +1440,15 @@ class TestCreate:
     def test_list_listeners(self, caplog, listener, listener_ipv6, gateway):
         caplog.clear()
         cli(["--format", "json", "listener", "list", "--subsystem", subsystem])
-        assert f'"host_name": "{host_name}"' in caplog.text
-        assert f'"traddr": "{listener[1]}"' in caplog.text
-        assert f'"trsvcid": {listener[3]}' in caplog.text
+        assert f'"host_name": "{host_name}",' in caplog.text
+        assert f'"traddr": "{listener[1]}",' in caplog.text
+        assert f'"trsvcid": {listener[3]},' in caplog.text
         assert '"adrfam": "ipv4"' in caplog.text
-        assert f'"traddr": "[{listener_ipv6[1]}]"' in caplog.text
-        assert f'"trsvcid": {listener_ipv6[3]}' in caplog.text
+        assert f'"traddr": "[{listener_ipv6[1]}]",' in caplog.text
+        assert f'"trsvcid": {listener_ipv6[3]},' in caplog.text
         assert '"adrfam": "ipv6"' in caplog.text
+        assert '"active": true,' in caplog.text
+        assert '"active": false,' not in caplog.text
 
     def test_list_listeners_bad_subsys(self, caplog, gateway):
         caplog.clear()
@@ -1486,8 +1488,15 @@ class TestCreate:
         assert f"Gateway's host name must match current host ({host_name})" in caplog.text
         caplog.clear()
         cli(["listener", "add", "--subsystem", subsystem] + listener)
-        assert f"Adding {subsystem} listener at {addr}:5015: listener will only be active when " \
-               f"appropriate gateway is up" in caplog.text
+        assert f"Adding {subsystem} listener at {listener[3]}:{listener[5]}: " \
+               f"listener will only be active when appropriate gateway is up" in caplog.text
+        caplog.clear()
+        cli(["--format", "json", "listener", "list", "--subsystem", subsystem])
+        assert f'"host_name": "{listener[1]}",' in caplog.text
+        assert f'"traddr": "{listener[3]}",' in caplog.text
+        assert f'"trsvcid": {listener[5]},' in caplog.text
+        assert f'"adrfam": "{listener[7]}"' in caplog.text
+        assert '"active": false,' in caplog.text
 
     @pytest.mark.parametrize("listener", listener_list_bad_ips)
     def test_create_listener_bad_ips(self, caplog, listener, gateway):
@@ -1577,6 +1586,18 @@ class TestCreate:
         assert f'"ns_subsystem_nqn": "{subsystem}"' in caplog.text
         assert f'"ns_subsystem_nqn": "{subsystem9}"' not in caplog.text
         assert f'"uuid": "{uuid}"' in caplog.text
+        caplog.clear()
+        cli(["namespace", "list", "--nsid", "1"])
+        assert "Cluster" not in caplog.text
+        assert "(Configured)" not in caplog.text
+        caplog.clear()
+        cli(["--verbose", "namespace", "list", "--nsid", "1"])
+        assert "Cluster" in caplog.text
+        assert "(Configured)" in caplog.text
+        assert "cluster_context_1_0" in caplog.text
+        assert f"{image2}" in caplog.text
+        assert f"{image15}" in caplog.text
+        assert "1 (1)" in caplog.text
 
     def test_namespace_count_updated(self, caplog):
         caplog.clear()

@@ -563,12 +563,14 @@ class GatewayClient:
                                                                  lstnr.listener.adrfam)
                     adrfam = self.format_adrfam(adrfam)
                     secure = "Yes" if lstnr.listener.secure else "No"
+                    active = "Yes" if lstnr.listener.active else "No"
                     ana_states = ana_states.removesuffix("\n")
                     listeners_list.append([lstnr.listener.host_name,
                                            lstnr.listener.trtype,
                                            adrfam,
                                            f"{lstnr.listener.traddr}:{lstnr.listener.trsvcid}",
                                            secure,
+                                           active,
                                            ana_states])
                 if len(listeners_list) > 0:
                     if args.format == "text":
@@ -581,7 +583,8 @@ class GatewayClient:
                                                       "Address Family",
                                                       "Address",
                                                       "Secure",
-                                                      "Load Balancing Group ID/State"],
+                                                      "Active",
+                                                      "Load Balancing\nGroup ID/State"],
                                              tablefmt=table_format)
                     out_func(f"Gateway listeners for {args.subsystem}:\n{listeners_out}")
                 else:
@@ -1281,11 +1284,13 @@ class GatewayClient:
                     adrfam = GatewayEnumUtils.get_key_from_value(pb2.AddressFamily, lstnr.adrfam)
                     adrfam = self.format_adrfam(adrfam)
                     secure = "Yes" if lstnr.secure else "No"
+                    active = "Yes" if lstnr.active else "No"
                     listeners_list.append([lstnr.host_name,
                                            lstnr.trtype,
                                            adrfam,
                                            f"{lstnr.traddr}:{lstnr.trsvcid}",
-                                           secure])
+                                           secure,
+                                           active])
                 if len(listeners_list) > 0:
                     if args.format == "text":
                         table_format = "fancy_grid"
@@ -1296,7 +1301,8 @@ class GatewayClient:
                                                       "Transport",
                                                       "Address Family",
                                                       "Address",
-                                                      "Secure"],
+                                                      "Secure",
+                                                      "Active"],
                                              tablefmt=table_format)
                     out_func(f"Listeners for {args.subsystem}:\n{listeners_out}")
                 else:

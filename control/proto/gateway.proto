@@ -488,6 +488,7 @@ message listener_info {
 	string traddr = 4;
 	uint32 trsvcid = 5;
 	optional bool secure = 6;
+	optional bool active = 7;
 }
 
 message listeners_info {
