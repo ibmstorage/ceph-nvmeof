@@ -532,6 +532,65 @@ class GatewayClient:
         else:
             assert False
 
+    def gw_get_stats(self, args):
+        """Show NVMf statistics for the gateway"""
+
+        out_func, err_func, _ = self.get_output_functions(args)
+        gw_stats = None
+        try:
+            get_stats_req = pb2.get_gateway_stats_req()
+            gw_stats = self.stub.get_gateway_stats(get_stats_req)
+        except Exception as ex:
+            gw_stats = pb2.gateway_stats_info(status=errno.EINVAL,
+                                              error_message=f"Failure getting gateway's "
+                                                            f"NVMf statistics:\n{ex}")
+
+        if args.format == "text" or args.format == "plain":
+            if gw_stats.status == 0:
+                if args.format == "text":
+                    table_format = "fancy_grid"
+                else:
+                    table_format = "plain"
+                stats_list = []
+                for pg in gw_stats.poll_groups:
+                    transports = ""
+                    for trns in pg.transports:
+                        transports += trns.trtype + ", "
+                    if transports:
+                        transports = transports.removesuffix(", ")
+                    stats_list.append([pg.name, gw_stats.tick_rate,
+                                       pg.admin_qpairs, pg.io_qpairs,
+                                       pg.current_admin_qpairs, pg.current_io_qpairs,
+                                       pg.pending_bdev_io, pg.completed_nvme_io,
+                                       transports])
+                stats_out = tabulate(stats_list,
+                                     headers=["Poll\nGroup", "Tick\nRate",
+                                              "Admin\nQPairs", "IO\nQPairs",
+                                              "Current\nAdmin\nQPairs",
+                                              "Current\nIO\nQPairs",
+                                              "Pending\nBdev\nIO",
+                                              "Completed\nNVMe\nIO",
+                                              "Transports"],
+                                     tablefmt=table_format)
+                out_func(f"NVMf statistics for gateway:\n{stats_out}")
+            else:
+                err_func(f"{gw_stats.error_message}")
+        elif args.format == "json" or args.format == "yaml":
+            ret_str = json_format.MessageToJson(gw_stats, indent=4,
+                                                including_default_value_fields=True,
+                                                preserving_proto_field_name=True)
+            if args.format == "json":
+                out_func(ret_str)
+            elif args.format == "yaml":
+                obj = json.loads(ret_str)
+                out_func(yaml.dump(obj))
+        elif args.format == "python":
+            return gw_stats
+        else:
+            assert False
+
+        return gw_stats.status
+
     def gw_listener_info(self, args):
         """Show gateway's listeners info"""
 
@@ -633,10 +692,13 @@ class GatewayClient:
     gw_actions.append({"name": "listener_info",
                        "args": gw_listener_info_args,
                        "help": "Show listeners information for the gateway"})
+    gw_actions.append({"name": "get_stats",
+                       "args": [],
+                       "help": "Show NVMf statistics for the gateway"})
     gw_choices = get_actions(gw_actions)
 
-    @cli.cmd(gw_actions)
-    def gw(self, args):
+    @cli.cmd(gw_actions, ["gw"])
+    def gateway(self, args):
         """Gateway commands"""
 
         if args.action == "info":
@@ -649,6 +711,8 @@ class GatewayClient:
             return self.gw_set_log_level(args)
         elif args.action == "listener_info":
             return self.gw_listener_info(args)
+        elif args.action == "get_stats":
+            return self.gw_get_stats(args)
         if not args.action:
             self.cli.parser.error(f"missing action for gw command (choose from "
                                   f"{GatewayClient.gw_choices})")

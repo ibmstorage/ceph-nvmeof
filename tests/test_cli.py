@@ -211,6 +211,21 @@ class TestGet:
         assert gw_info.status == 0
         assert gw_info.bool_status
 
+    def test_get_gateway_stats(self, caplog, gateway):
+        caplog.clear()
+        cli(["--format", "json", "gateway", "get_stats"])
+        assert '"status": 0' in caplog.text
+        assert '"tick_rate": ' in caplog.text
+        assert '"poll_groups": [' in caplog.text
+        assert '"name": "nvmf_tgt_poll_group_000",' in caplog.text
+        assert '"admin_qpairs": 0,' in caplog.text
+        assert '"io_qpairs": 0,' in caplog.text
+        assert '"current_admin_qpairs": 0,' in caplog.text
+        assert '"current_io_qpairs": 0,' in caplog.text
+        assert '"pending_bdev_io": "0",' in caplog.text
+        assert '"completed_nvme_io": "0"' in caplog.text
+        assert '"trtype": "TCP"' in caplog.text
+
 
 class TestCreate:
     def test_create_subsystem(self, caplog, gateway):
