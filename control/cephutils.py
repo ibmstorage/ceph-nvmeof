@@ -353,9 +353,9 @@ class CephUtils:
                     raise rbd.ImageNotFound(f"Image {pool}/{image_name} doesn't exist",
                                             errno=errno.ENODEV)
                 except KeyError:
-                    self.logger.exception(f"No metadata {key} for image "
-                                          f"{pool}/{image_name}")
-                    raise
+                    self.logger.info(f"No metadata {key} for image "
+                                     f"{pool}/{image_name}, no need to remove")
+                    pass
                 except Exception:
                     self.logger.exception(f"Error while trying to remove metadata {key} of image "
                                           f"{pool}/{image_name}")
