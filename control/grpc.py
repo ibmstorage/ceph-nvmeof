@@ -5783,6 +5783,58 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
         return self.execute_grpc_function(self.get_gateway_info_safe, request, context)
 
+    def get_gateway_stats_safe(self, request, context=None):
+        """Get gateway's NVMf statistics"""
+
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling get_gateway_stats_safe()"
+        error_prefix = "Failure getting gateway's NVMf statistics"
+        peer_msg = self.get_peer_message(context)
+        self.logger.info(f"Received request to get gateway's NVMf statistics{peer_msg}")
+        try:
+            gw_stats = rpc_nvmf.nvmf_get_stats(self.spdk_rpc_client)
+            self.logger.debug(f"nvmf_get_stats: {gw_stats}")
+        except Exception as ex:
+            self.logger.exception(error_prefix)
+            errmsg = f"{error_prefix}:\n{ex}"
+            resp = self.parse_json_exeption(ex)
+            status = errno.EINVAL
+            if resp:
+                status = resp["code"]
+                errmsg = f"{error_prefix}: {resp['message']}"
+            return pb2.gateway_stats_info(status=status, error_message=errmsg)
+
+        gw_stats_info = None
+        try:
+            tick_rate = gw_stats["tick_rate"]
+            poll_groups = []
+            for poll_grp in gw_stats["poll_groups"]:
+                transports = []
+                for trns in poll_grp["transports"]:
+                    transports.append(pb2.poll_group_transport_info(trtype=trns["trtype"]))
+                pg = pb2.poll_group_info(name=poll_grp["name"],
+                                         admin_qpairs=poll_grp["admin_qpairs"],
+                                         io_qpairs=poll_grp["io_qpairs"],
+                                         current_admin_qpairs=poll_grp["current_admin_qpairs"],
+                                         current_io_qpairs=poll_grp["current_io_qpairs"],
+                                         pending_bdev_io=poll_grp["pending_bdev_io"],
+                                         completed_nvme_io=poll_grp["completed_nvme_io"],
+                                         transports=transports)
+                poll_groups.append(pg)
+            gw_stats_info = pb2.gateway_stats_info(status=0, error_message=os.strerror(0),
+                                                   tick_rate=tick_rate,
+                                                   poll_groups=poll_groups)
+        except KeyError:
+            self.logger.exception(f"Error parsing {gw_stats}")
+            errmsg = f"{error_prefix}: Error parsing"
+            return pb2.gateway_stats_info(status=errno.ENOKEY, error_message=errmsg)
+
+        return gw_stats_info
+
+    def get_gateway_stats(self, request, context=None):
+        """Get gateway's NVMf statistics"""
+
+        return self.execute_grpc_function(self.get_gateway_stats_safe, request, context)
+
     def get_gateway_log_level(self, request, context=None):
         """Get gateway's log level"""
 
