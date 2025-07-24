@@ -199,8 +199,7 @@ class NVMeOFCollector:
     @timer
     def _get_bdev_info(self):
         try:
-            with self.gateway_rpc.rpc_lock:
-                return rpc.bdev.bdev_get_bdevs(self.spdk_rpc_client)
+            return rpc.bdev.bdev_get_bdevs(self.spdk_rpc_client)
         except Exception:
             logger.exception("Error trying to call bdev_get_bdevs()")
             return []
@@ -208,8 +207,7 @@ class NVMeOFCollector:
     @timer
     def _get_bdev_io_stats(self):
         try:
-            with self.gateway_rpc.rpc_lock:
-                return rpc.bdev.bdev_get_iostat(self.spdk_rpc_client)
+            return rpc.bdev.bdev_get_iostat(self.spdk_rpc_client)
         except Exception:
             logger.exception("Error trying to call bdev_get_iostat()")
             return {}
@@ -217,8 +215,7 @@ class NVMeOFCollector:
     @timer
     def _get_spdk_thread_stats(self):
         try:
-            with self.gateway_rpc.rpc_lock:
-                return rpc.app.thread_get_stats(self.spdk_rpc_client)
+            return rpc.app.thread_get_stats(self.spdk_rpc_client)
         except Exception:
             logger.exception("Error trying to call thread_get_stats()")
             return {}
