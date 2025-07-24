@@ -97,6 +97,7 @@ class GatewayServer:
         spdk_rpc_client: Client of SPDK RPC server
         spdk_rpc_ping_client: Ping client of SPDK RPC server
         spdk_rpc_subsystems_client: subsystems client of SPDK RPC server
+        spdk_rpc_prometheus_client: prometheus client of SPDK RPC server
         spdk_process: Subprocess running SPDK NVMEoF target application
         discovery_pid: Subprocess running Ceph nvmeof discovery service
     """
@@ -257,7 +258,7 @@ class GatewayServer:
         self.logger.info("Stopping the MonitorGroup server...")
         grace = self.config.getfloat_with_default("gateway", "monitor_stop_grace", 1 / 1000)
         self.monitor_server.stop(grace).wait()
-        self.logger.info("The MonitorGroup gRPC server stopped...")
+        self.logger.info("The MonitorGroup gRPC server has stopped...")
         self.monitor_server = None
 
     def start_prometheus(self):
@@ -272,7 +273,8 @@ class GatewayServer:
                     self.logger.info(f"Delaying Prometheus startup by {delay} seconds...")
                     stop_event = threading.Event()
                     stop_event.wait(timeout=delay)
-                start_exporter(self.spdk_rpc_client, self.config, self.gateway_rpc, self.logger)
+                start_exporter(self.spdk_rpc_prometheus_client, self.config,
+                               self.gateway_rpc, self.logger)
 
             threading.Thread(target=delayed_start, daemon=True).start()
             self.logger.info("Prometheus startup scheduled in background")
@@ -674,6 +676,13 @@ class GatewayServer:
                 conn_retries=conn_retries,
             )
             self.spdk_rpc_subsystems_client = rpc_client.JSONRPCClient(
+                self.spdk_rpc_socket_path,
+                None,
+                timeout,
+                log_level=protocol_log_level,
+                conn_retries=conn_retries,
+            )
+            self.spdk_rpc_prometheus_client = rpc_client.JSONRPCClient(
                 self.spdk_rpc_socket_path,
                 None,
                 timeout,
