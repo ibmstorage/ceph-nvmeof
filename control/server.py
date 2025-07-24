@@ -23,6 +23,7 @@ import spdk.rpc
 import spdk.rpc.client as rpc_client
 import spdk.rpc.nvmf as rpc_nvmf
 import spdk.rpc.iobuf as rpc_iobuf
+import spdk.rpc.dsa as rpc_dsa
 
 from .proto import gateway_pb2 as pb2
 from .proto import gateway_pb2_grpc as pb2_grpc
@@ -34,6 +35,7 @@ from .config import GatewayConfig
 from .utils import GatewayLogger
 from .utils import GatewayUtils
 from .utils import GatewayUtilsCrypto
+from .utils import DsaUtils
 from .cephutils import CephUtils
 from .prometheus import start_exporter
 
@@ -125,7 +127,6 @@ class GatewayServer:
         self.crypto = None
         self.gateway_state = None
         self.exiting = False
-        self.is_gateway_process = True
         enc_key = None
         enc_key_file = self.config.get_with_default("gateway", "encryption_key", "")
         if enc_key_file:
@@ -161,14 +162,12 @@ class GatewayServer:
         if gw_logger:
             logger = gw_logger.logger
 
-        # In case we got here because the discovery exited, do nothing
-        if not self.is_gateway_process:
-            process_name = "discovery"
-            if logger:
-                logger.info(f"Exiting the {process_name} process.")
-            return
-        else:
-            process_name = "gateway"
+        normalExit = False
+        if exc_type is None and exc_value is None:
+            normalExit = True
+        elif isinstance(exc_value, SystemExit) and isinstance(exc_value.code, int):
+            normalExit = exc_value.code == 0
+
         if self.gateway_rpc:
             self.gateway_rpc.up_and_running = False
         if self.gateway_state:
@@ -179,14 +178,14 @@ class GatewayServer:
         if self.exiting:
             if logger:
                 logger.debug("Already exiting, do nothing")
-            return
+            return normalExit
         self.exiting = True
 
         if logger:
-            if exc_type is not None:
-                logger.exception("GatewayServer exception occurred:\n{traceback}\n")
-            else:
+            if normalExit:
                 logger.info("GatewayServer is terminating gracefully...")
+            else:
+                logger.exception("GatewayServer exception occurred")
 
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         if self.monitor_client_process:
@@ -232,10 +231,12 @@ class GatewayServer:
             self.omap_state = None
 
         if logger:
-            logger.info(f"Exiting the {process_name} process.")
+            logger.info("Exiting the gateway process.")
 
         if gw_logger and gw_name:
             gw_logger.compress_final_log_file(gw_name)
+
+        return normalExit
 
     def set_group_id(self, id: int):
         self.logger.info(f"Gateway {self.name} group {id=}")
@@ -278,6 +279,9 @@ class GatewayServer:
                                       f"gateway-{self.name}")
         self.omap_state = omap_state
         local_state = LocalGatewayState()
+
+        # Accel config
+        self._accel_config()
 
         # install SIGCHLD handler
         signal.signal(signal.SIGCHLD, sigchld_handler)
@@ -423,6 +427,8 @@ class GatewayServer:
             self.logger.info("Using SPDK discovery service")
             return
 
+        assert self.gateway_rpc is None, \
+            "A call to SPDK without a lock when the gateway is running"
         try:
             rpc_nvmf.nvmf_delete_subsystem(self.spdk_rpc_client, GatewayUtils.DISCOVERY_NQN)
         except Exception:
@@ -434,28 +440,16 @@ class GatewayServer:
         self.discovery_pid = os.fork()
         if self.discovery_pid == 0:
             self.logger.info("Starting ceph nvmeof discovery service")
-            # Reset server related fields for the discovery process
-            self.is_gateway_process = False
-            self.spdk_process = None
-            self.monitor_client_process = None
-            self.spdk_log_file = None
-            self.spdk_log_file_path = None
-            self.monitor_client_log_file = None
-            self.monitor_client_log_file_path = None
-            self.omap_state = None
-            self.name = None
+            # disable inherited from gateway signal handlers
             signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-            if self.server:
-                self.server.stop(None)
-                self.server = None
-            if self.gateway_rpc:
-                self.gateway_rpc.up_and_running = False
-                self.gateway_rpc = None
-            self.gateway_state = None
-            self.omap_lock = None
-            with DiscoveryService(self.config) as discovery:
-                discovery.start_service()
-            os._exit(0)
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            try:
+                with DiscoveryService(self.config) as discovery:
+                    discovery.start_service()
+            except Exception:
+                self.logger.exception("Exception occurred while running the discovery service")
+            finally:
+                os._exit(0)
         else:
             self.logger.info(f"Discovery service process id: {self.discovery_pid}")
 
@@ -554,7 +548,6 @@ class GatewayServer:
 
         # Start target
         self.logger.debug(f"Configuring server {self.name}")
-        waiting_for_rpc = False
         spdk_tgt_path = self.config.get("spdk", "tgt_path")
         self.logger.info(f"SPDK Target Path: {spdk_tgt_path}")
         sockdir = self.config.get_with_default("spdk", "rpc_socket_dir", "/var/tmp/")
@@ -576,16 +569,12 @@ class GatewayServer:
         self.logger.info(f"SPDK Socket: {self.spdk_rpc_socket_path}")
         spdk_tgt_cmd_extra_args = self.config.get_with_default(
             "spdk", "tgt_cmd_extra_args", "")
-        cmd = [spdk_tgt_path, "-u", "-r", self.spdk_rpc_socket_path]
+        cmd = [spdk_tgt_path, "--wait-for-rpc", "-u", "-r", self.spdk_rpc_socket_path]
 
         iobuf_options = self.config.get_with_default("spdk", "iobuf_options", "")
         max_subsystems = self.config.getint_with_default("gateway",
                                                          "max_subsystems",
                                                          GatewayService.MAX_SUBSYSTEMS_DEFAULT)
-        if iobuf_options or max_subsystems > 0:
-            waiting_for_rpc = True
-            cmd += ["--wait-for-rpc"]
-
         # Add extra args from the conf file
         if spdk_tgt_cmd_extra_args:
             cmd += shlex.split(spdk_tgt_cmd_extra_args)
@@ -664,8 +653,8 @@ class GatewayServer:
             if iobuf_options:
                 self._initialize_iobuf_options(iobuf_options)
 
-            if waiting_for_rpc:
-                self._initialize_framework()
+            # Set config and enable dsa accel module offload.
+            self._probe_dsa()
 
             self.spdk_rpc_ping_client = rpc_client.JSONRPCClient(
                 self.spdk_rpc_socket_path,
@@ -681,6 +670,7 @@ class GatewayServer:
                 log_level=protocol_log_level,
                 conn_retries=conn_retries,
             )
+
         except Exception:
             self.logger.exception("Unable to initialize SPDK")
             raise
@@ -764,18 +754,54 @@ class GatewayServer:
                 self.logger.exception(f"An error occurred while removing RPC "
                                       f"socket {self.spdk_rpc_socket_path}")
 
+    def _terminate_discovery(self, pid):
+        def is_running(pid):
+            try:
+                os.kill(pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                self.logger.exception(f"Permission denied when checking status of discovery {pid}")
+                return True
+
+        def wait_for_exit(pid):
+            WAIT_INTERVAL_SEC = 0.1
+            MAX_WAIT_ATTEMPTS = 10
+            for _ in range(MAX_WAIT_ATTEMPTS):
+                if not is_running(pid):
+                    return True
+                time.sleep(WAIT_INTERVAL_SEC)
+            return False
+
+        try:
+            # discovery service selector loop should exit
+            # due to KeyboardInterrupt exception on SIGINT signal
+            signals = [signal.SIGINT, signal.SIGTERM, signal.SIGKILL]
+            for sig in signals:
+                self.logger.info(f"Sending signal {sig.name} to Discovery service process {pid}")
+                os.kill(pid, sig)
+                if wait_for_exit(pid):
+                    return True
+            self.logger.warning(
+                f"Discovery service process {pid} did not exit after all signals."
+            )
+            return False
+
+        except ProcessLookupError:
+            self.logger.info(f"Discovery service process {pid} already exited.")
+            return True
+        except Exception:
+            self.logger.exception(f"Error terminating discovery service process {pid}")
+            return False
+
     def _stop_discovery(self):
         """Stops Discovery service process."""
         assert self.discovery_pid is not None             # should be verified by the caller
 
         self.logger.info("Terminating discovery service...")
-        # discovery service selector loop should exit due to KeyboardInterrupt exception
-        try:
-            os.kill(self.discovery_pid, signal.SIGINT)
-            os.waitpid(self.discovery_pid, os.WNOHANG)
-        except (ChildProcessError, ProcessLookupError):
-            pass          # ignore
-        self.logger.info("Discovery service terminated")
+        if self._terminate_discovery(self.discovery_pid):
+            self.logger.info("Discovery service terminated")
 
         self.discovery_pid = None
 
@@ -806,14 +832,26 @@ class GatewayServer:
             self.logger.exception("IObuf set options returned with error")
             pass
 
-    def _initialize_framework(self):
-        """In case we started SPDK with the "wait for rpc" flag, we need to call this"""
+    def _accel_config(self):
+        # Instantiate DsaUtils and run config
+        if self.config.getboolean_with_default("spdk", "enable_dsa_acceleration", True):
+            dsa_utils = DsaUtils(self.logger)
+            dsa_utils.config()
+        else:
+            self.logger.info("DSA acceleration device configuration is disabled")
 
+    def _probe_dsa(self):
+        """Initializes dsa accel module offload."""
         try:
+            if self.config.getboolean_with_default("spdk", "enable_dsa_acceleration", True):
+                res = rpc_dsa.dsa_scan_accel_module(self.spdk_rpc_client, config_kernel_mode=True)
+                self.logger.debug(f"dsa_scan_accel_module: {res=}")
+            else:
+                self.logger.info("DSA acceleration module scanning is disabled")
             spdk.rpc.framework_start_init(self.spdk_rpc_client)
         except Exception:
-            self.logger.exception("Framework start init returned with error")
-            pass
+            self.logger.exception("Failed to probe dsa accel module offload")
+            raise
 
     def _create_transport(self, trtype):
         """Initializes a transport type."""
@@ -953,9 +991,25 @@ class GatewayServer:
         else:
             self.logger.warning(f"Can't find huge pages file {hugepages_file}")
 
-    def gateway_rpc_caller(self, requests, is_add_req):
+    def _sleep_if_needed(self, interval, start):
+        if interval <= 0:
+            return None
+
+        if not start:
+            start = time.monotonic()
+
+        if time.monotonic() - start >= interval:
+            self.logger.debug("Will sleep and let other threads work")
+            time.sleep(0)
+            start = time.monotonic()
+
+        return start
+
+    def gateway_rpc_caller(self, requests, is_add_req, break_interval):
         """Passes RPC requests to gateway service."""
+        start_time = 0
         for key, val in requests.items():
+            start_time = self._sleep_if_needed(break_interval, start_time)
             if key.startswith(GatewayState.SUBSYSTEM_PREFIX):
                 if is_add_req:
                     req = json_format.Parse(val, pb2.create_subsystem_req(),

@@ -1,6 +1,8 @@
 ---
 # yamllint disable rule:line-length
 name: "CI"
+permissions:
+  contents: read
 on:  # yamllint disable rule:truthy
   push:
     tags:
@@ -11,7 +13,7 @@ on:  # yamllint disable rule:truthy
     branches:
       - devel
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 21 * * *'
   workflow_dispatch:
   release:
     types:
@@ -105,7 +107,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: ["cli", "cli_change_lb", "cli_change_keys", "cli_change_ns_visibility", "cli_trash_rbd", "state", "multi_gateway", "server", "grpc", "omap_lock", "log_files", "nsid", "psk", "dhchap", "subsys_grp_name_append", "max_subsystems", "omap_no_read_lock", "omap_read_lock", "omap_read_lock_ignore_errors", "big_omap"]
+        test: ["cli", "cli_change_lb", "cli_change_keys", "cli_change_ns_visibility", "cli_trash_rbd", "state", "multi_gateway", "server", "grpc", "omap_lock", "log_files", "nsid", "psk", "dhchap", "subsys_grp_name_append", "max_subsystems", "omap_no_read_lock", "omap_read_lock", "omap_read_lock_ignore_errors", "big_omap", "ns_limit"]
     runs-on: ubuntu-latest
     env:
       HUGEPAGES: 512  # for multi gateway test, approx 256 per gateway instance
@@ -491,7 +493,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: ["sanity", "no_huge", "ns_lb_change", "no_subsystems", "auto_load_balance", "state_transitions", "state_transitions_both_gws", "state_transitions_loop", "state_transitions_rand_loop", "late_registration", "late_registration_loop", "4gws", "4gws_loop", "4gws_create_delete", "4gws_create_delete_loop", "namespaces", "namespaces_loop", "mtls", "notify", "ceph_status", "blocklist", "main_exit", "cluster_pool", "flat_bdev_per_cluster", "set_qos", "set_qos_2ms"]
+        test: ["sanity", "no_huge", "ns_lb_change", "no_subsystems", "auto_load_balance", "state_transitions", "state_transitions_both_gws", "state_transitions_loop", "state_transitions_rand_loop", "late_registration", "late_registration_loop", "4gws", "4gws_loop", "4gws_create_delete", "4gws_create_delete_loop", "namespaces", "namespaces_loop", "mtls", "notify", "ceph_status", "blocklist", "main_exit", "listener_hostname", "cluster_pool", "flat_bdev_per_cluster", "set_qos", "set_qos_2ms", "rbd_qos", "auto_resize", "ns_read_only", "reuse_image"]
     runs-on: ubuntu-latest
     env:
       HUGEPAGES: 1024  # 4 spdk instances
@@ -591,11 +593,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download container images
-        uses: actions/download-artifact@v4
-        with:
-          pattern: container_images_nvmeof
-          merge-multiple: true
+      - name: Container_images_nvmeof folder (tar files) download
+        run: |
+          for i in {1..5}; do
+            echo "Attempt $i to download artifacts..."
+            gh run download --pattern "container_images_nvmeof" && break
+            echo "Download failed. Retrying in $((i * 5))s..."
+            sleep $((i * 5))
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cluster build and Atom tests run
         if: always()
@@ -608,12 +615,13 @@ jobs:
         if: always()
         run: ./tests/atom/cpArtifactAndCleanup.sh
 
-      - name: Upload artifact for non-schedule events
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: atom-artifact
-          path: /home/cephnvme/artifact_m7.tar.gz
+      # TODO: investigating upluad to artifact issue
+      # - name: Upload artifact for non-schedule events
+      #   uses: actions/upload-artifact@v4
+      #   if: always()
+      #   with:
+      #     name: atom-artifact
+      #     path: /home/cephnvme/artifact_m7.tar.gz
 
   atom-nightly:
     needs: [build, build-ceph]
@@ -624,11 +632,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download container images
-        uses: actions/download-artifact@v4
-        with:
-          pattern: container_images_nvmeof
-          merge-multiple: true
+      - name: Container_images_nvmeof folder (tar files) download
+        run: |
+          for i in {1..5}; do
+            echo "Attempt $i to download artifacts..."
+            gh run download --pattern "container_images_nvmeof" && break
+            echo "Download failed. Retrying in $((i * 5))s..."
+            sleep $((i * 5))
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
             
       - name: Cluster build and Atom nightly tests run
         if: always()
@@ -642,21 +655,96 @@ jobs:
         if: always()
         run: ./tests/atom/cpArtifactAndCleanup.sh 'nightly'
 
-      - name: Upload nightly nvmeof console as artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nightly-nvmeof-full-console
-          path: nightly_nvmeof_console.log
+      # TODO: investigating upluad to artifact issue
+      # - name: Upload nightly nvmeof console as artifact
+      #   if: always()
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: nightly-nvmeof-full-console
+      #     path: nightly_nvmeof_console.log
 
-      - name: Upload artifact for schedule events
-        uses: actions/upload-artifact@v4
-        if: always()
+      # - name: Upload artifact for schedule events
+      #   uses: actions/upload-artifact@v4
+      #   if: always()
+      #   with:
+      #     name: atom-artifact
+      #     path: /home/cephnvme/artifact_m8.tar.gz
+
+  push-images-to-ceph-registry:
+    if: github.event_name == 'release'
+    needs: [pytest, demo, discovery, ha, atom]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download container images (nvmeof)
+        uses: actions/download-artifact@v4
         with:
-          name: atom-artifact
-          path: /home/cephnvme/artifact_m8.tar.gz
+          pattern: container_images_nvmeof*
+          merge-multiple: true
+
+      - name: Download container image (spdk)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: container_image_spdk
+          merge-multiple: true
+
+      - name: Load container images
+        run: |
+          docker load < nvmeof.tar
+          docker load < nvmeof-cli.tar
+          docker load < spdk.tar
+
+      - name: Login to quay.io
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
+        with:
+          registry: ${{ vars.CONTAINER_REGISTRY }}
+          username: '${{ vars.CONTAINER_REGISTRY_USERNAME }}'
+          password: '${{ secrets.CONTAINER_REGISTRY_PASSWORD }}'
+
+      - name: Publish nvmeof containers and spdk when release/tag is created
+        run: |
+          make push
+
+  push-devel-image-to-ceph-registry:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/devel'
+    needs: [pytest, demo, discovery, ha, atom]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download container images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: container_images_nvmeof*
+          merge-multiple: true
+
+      - name: Load container images
+        run: |
+          docker load < nvmeof.tar
+          docker load < nvmeof-cli.tar
+
+      - name: Login to quay.io
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
+        with:
+          registry: ${{ vars.CONTAINER_REGISTRY }}
+          username: '${{ vars.CONTAINER_REGISTRY_USERNAME }}'
+          password: '${{ secrets.CONTAINER_REGISTRY_PASSWORD }}'
+
+      - name: Publish nvmeof containers when merged to devel
+        run: |
+          . .env
+          for image in nvmeof nvmeof-cli; do
+            docker tag $CONTAINER_REGISTRY/$image:$NVMEOF_VERSION $CONTAINER_REGISTRY/$image:devel
+            docker push $CONTAINER_REGISTRY/$image:devel
+          done
 
   pull-and-run-images:
+    needs: [push-images-to-ceph-registry]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

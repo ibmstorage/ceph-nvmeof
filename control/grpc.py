@@ -17,6 +17,7 @@ import errno
 import threading
 import hashlib
 import tempfile
+import time
 from pathlib import Path
 from typing import Iterator, Callable
 from collections import defaultdict
@@ -29,6 +30,7 @@ from binascii import crc32
 from spdk.rpc import spdk_get_version
 import spdk.rpc.bdev as rpc_bdev
 import spdk.rpc.nvmf as rpc_nvmf
+import spdk.rpc.notify as rpc_notify
 import spdk.rpc.keyring as rpc_keyring
 import spdk.rpc.log as rpc_log
 from spdk.rpc.client import JSONRPCException
@@ -87,6 +89,8 @@ class SubsystemHostAuth:
         self.host_dhchap_key = defaultdict(dict)
         self.host_psk_key = defaultdict(dict)
         self.host_nqn = defaultdict(set)
+        self.host_ka_timeout = defaultdict(set)
+        self.host_ka_timeout_lock = threading.Lock()
 
     def is_valid_psk(self, psk: str):
         PSK_CRC32_SIZE_BYTES = 4
@@ -247,6 +251,7 @@ class SubsystemHostAuth:
         self.subsys_allow_any_hosts.pop(subsys, None)
         self.subsys_dhchap_key.pop(subsys, None)
         self.host_nqn.pop(subsys, None)
+        self.host_ka_timeout.pop(subsys, None)
 
     def add_psk_host(self, subsys, host, key):
         if key:
@@ -321,6 +326,24 @@ class SubsystemHostAuth:
             cnt += len(self.host_nqn[s])
         return cnt
 
+    def set_host_keepalive_timeout_disconnection(self, subsys, hostnqn):
+        with self.host_ka_timeout_lock:
+            self.host_ka_timeout[subsys].add(hostnqn)
+
+    def reset_host_keepalive_timeout_disconnection(self, subsys, hostnqn):
+        with self.host_ka_timeout_lock:
+            if subsys not in self.host_ka_timeout:
+                return
+            self.host_ka_timeout[subsys].discard(hostnqn)
+
+    def was_host_disconnected_due_to_keepalive_timeout(self, subsys, hostnqn) -> bool:
+        with self.host_ka_timeout_lock:
+            if subsys not in self.host_ka_timeout:
+                return False
+            if hostnqn not in self.host_ka_timeout[subsys]:
+                return False
+        return True
+
     def allow_any_host(self, subsys):
         self.subsys_allow_any_hosts[subsys] = True
 
@@ -358,7 +381,8 @@ class SubsystemHostAuth:
 
 
 class NamespaceInfo:
-    def __init__(self, nsid, bdev, uuid, anagrpid, auto_visible, pool, image, trash_image):
+    def __init__(self, nsid, bdev, uuid, anagrpid, auto_visible, pool, image,
+                 trash_image, read_only):
         self.nsid = nsid
         self.bdev = bdev
         self.uuid = uuid
@@ -368,11 +392,13 @@ class NamespaceInfo:
         self.pool = pool
         self.image = image
         self.trash_image = trash_image
+        self.read_only = read_only
 
     def __str__(self):
         return f"nsid: {self.nsid}, bdev: {self.bdev}, uuid: {self.uuid}, " \
                f"auto_visible: {self.auto_visible}, anagrpid: {self.anagrpid}, " \
                f"pool: {self.pool}, image: {self.image}, trash_image: {self.trash_image}, " \
+               f"read_only: {self.read_only}, " \
                f"hosts: {self.host_list}"
 
     def empty(self) -> bool:
@@ -396,6 +422,9 @@ class NamespaceInfo:
     def set_visibility(self, auto_visible: bool):
         self.auto_visible = auto_visible
 
+    def set_read_only(self, read_only: bool):
+        self.read_only = read_only
+
     def is_host_in_namespace(self, host_nqn):
         return host_nqn in self.host_list
 
@@ -417,7 +446,7 @@ class NamespaceInfo:
 
 
 class NamespacesLocalList:
-    EMPTY_NAMESPACE = NamespaceInfo(None, None, None, 0, False, None, None, False)
+    EMPTY_NAMESPACE = NamespaceInfo(None, None, None, 0, False, None, None, False, False)
 
     def __init__(self):
         self.namespace_list = defaultdict(dict)
@@ -433,11 +462,12 @@ class NamespacesLocalList:
                 self.namespace_list.pop(nqn, None)
 
     def add_namespace(self, nqn, nsid, bdev, uuid, anagrpid, auto_visible,
-                      pool, image, trash_image):
+                      pool, image, trash_image, read_only):
         if not bdev:
             bdev = GatewayService.find_unique_bdev_name(uuid)
         self.namespace_list[nqn][nsid] = NamespaceInfo(nsid, bdev, uuid, anagrpid,
-                                                       auto_visible, pool, image, trash_image)
+                                                       auto_visible, pool, image, trash_image,
+                                                       read_only)
 
     def find_namespace(self, nqn, nsid, uuid=None) -> NamespaceInfo:
         if nqn not in self.namespace_list:
@@ -524,6 +554,78 @@ class NamespacesLocalList:
         return ns_list
 
 
+class ImageIdentification:
+    DELIMITER = GatewayState.OMAP_KEY_DELIMITER
+
+    def __init__(self, group_name, subsys, uuid):
+        group_name_to_use = None
+        if group_name is not None:
+            group_name_to_use = group_name.replace(ImageIdentification.DELIMITER, "-")
+        self.group_name = group_name_to_use
+        self.subsys = subsys
+        self.uuid = uuid
+
+    def __str__(self):
+        return f"{self.group_name}{ImageIdentification.DELIMITER}{self.subsys}" \
+               f"{ImageIdentification.DELIMITER}{self.uuid}"
+
+    def empty(self) -> bool:
+        if self.group_name is not None:
+            return False
+        if self.subsys is not None:
+            return False
+        if self.uuid is not None:
+            return False
+        return True
+
+    def is_same_group(self, group_name: str) -> bool:
+        if group_name is None:
+            return self.group_name is None
+        if not group_name:
+            return not self.group_name
+        group_name_to_use = group_name.replace(ImageIdentification.DELIMITER, "-")
+        return group_name_to_use == self.group_name
+
+    def is_same_uuid(self, uuid: str) -> bool:
+        if uuid is None:
+            return self.uuid is None
+        if not uuid:
+            return not self.uuid
+        return uuid == self.uuid
+
+    def is_same_image_id(self, img_id) -> bool:
+        if self.group_name != img_id.group_name:
+            return False
+        if self.subsys != img_id.subsys:
+            return False
+        if self.uuid != img_id.uuid:
+            return False
+        return True
+
+    @classmethod
+    def parse(cls, img_ids: str) -> list:
+        parts = img_ids.split(ImageIdentification.DELIMITER)
+        ids_list = []
+        while parts:
+            group_name, subsys, uuid = parts[:3]
+            ids_list.append(ImageIdentification(group_name, subsys, uuid))
+            parts = parts[3:]
+
+        return ids_list
+
+    @classmethod
+    def list2string(cls, img_ids: list) -> str:
+        if not img_ids:
+            return ""
+
+        result = ""
+        for one_img in img_ids:
+            result += f"{one_img}, "
+
+        result = "[" + result.removesuffix(", ") + "]"
+        return result
+
+
 class GatewayService(pb2_grpc.GatewayServicer):
     """Implements gateway service interface.
 
@@ -547,10 +649,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
     DHCHAP_CONTROLLER_PREFIX = "dhchap_ctrlr"
     KEYS_DIR = "/var/tmp"
     MAX_SUBSYSTEMS_DEFAULT = 128
-    MAX_NAMESPACES_DEFAULT = 1024
+    MAX_NAMESPACES_DEFAULT = 2048
     MAX_NAMESPACES_PER_SUBSYSTEM_DEFAULT = 256
     MAX_HOSTS_PER_SUBSYS_DEFAULT = 128
     MAX_HOSTS_DEFAULT = 2048
+    # notification name should be the same as in spdk/lib/nvmf/ctrlr.c
+    SPDK_HOST_KEEPALIVE_TIMEOUT_NOTIFICATION = "host_keepalive_timeout"
 
     def __init__(self, config: GatewayConfig, gateway_state: GatewayStateHandler,
                  rpc_lock, omap_lock: OmapLock, group_id: int, spdk_rpc_client,
@@ -663,7 +767,47 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self.spdk_version = None
         self.spdk_qos_timeslice = self.config.getint_with_default("spdk",
                                                                   "qos_timeslice_in_usecs", None)
+        spdk_notifications_interval = self.config.getint_with_default("spdk",
+                                                                      "notifications_interval",
+                                                                      60)
+        self.spdk_notifications_thread = None
+        if spdk_notifications_interval > 0:
+            self.spdk_notifications_thread = threading.Thread(target=self.read_spdk_notifications,
+                                                              name="SPDK Notifications",
+                                                              daemon=True,
+                                                              args=(spdk_notifications_interval,))
+            self.spdk_notifications_thread.start()
+
         self.set_gateway_exit_message = set_gateway_exit_message
+
+    def read_spdk_notifications(self, read_interval):
+        if read_interval <= 0:
+            return
+
+        spdk_notification_last_id_read = -1
+
+        while self.up_and_running:
+            with self.rpc_lock:
+                notifications = rpc_notify.notify_get_notifications(
+                    self.spdk_rpc_client, id=spdk_notification_last_id_read + 1)
+            if notifications:
+                self.logger.debug(f"spdk_notifications: {notifications}")
+                for n in notifications:
+                    try:
+                        spdk_notification_last_id_read = n["id"]
+                        if n["type"] == GatewayService.SPDK_HOST_KEEPALIVE_TIMEOUT_NOTIFICATION:
+                            n_ctx = n["ctx"]
+                            (hostnqn,
+                             subsysnqn,
+                             timeout) = n_ctx.split(GatewayState.OMAP_KEY_DELIMITER)
+                            self.logger.warning(f"Host {hostnqn} was disconnected from subsystem "
+                                                f"{subsysnqn} due to keep alive timeout after "
+                                                f"{timeout} milliseconds")
+                            self.host_info.set_host_keepalive_timeout_disconnection(subsysnqn,
+                                                                                    hostnqn)
+                    except Exception:
+                        self.logger.exception(f"Invalid notification: {n}")
+            time.sleep(read_interval)
 
     def get_directories_for_key_file(self, key_type: str,
                                      subsysnqn: str, create_dir: bool = False) -> []:
@@ -781,8 +925,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         return key_name
 
     def remove_key_from_keyring(self, key_type: str, subsysnqn: str, hostnqn: str) -> None:
-        assert self.rpc_lock.locked(), "RPC is unlocked when calling remove_key_from_keyring()"
         key_name = GatewayService.construct_key_name_for_keyring(subsysnqn, hostnqn, key_type)
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling keyring_file_remove_key()"
         try:
             rpc_keyring.keyring_file_remove_key(self.spdk_rpc_client, key_name)
         except Exception:
@@ -928,8 +1072,92 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
         return rc
 
+    def get_image_identification(self, rbd_pool: str, rbd_image: str) -> list[ImageIdentification]:
+        image_id_metadata = None
+        if not self.ceph_utils.does_image_exist(rbd_pool, rbd_image):
+            self.logger.debug(f"Image {rbd_pool}/{rbd_image} not found")
+            return []
+        try:
+            image_id_metadata = self.ceph_utils.get_image_metadata(
+                rbd_pool, rbd_image, CephUtils.METADATA_KEY_IMAGE_ID)
+        except KeyError:
+            pass
+        except Exception:
+            self.logger.exception(f"Error getting image identification for image "
+                                  f"{rbd_pool}/{rbd_image}")
+        if not image_id_metadata:
+            return []
+
+        try:
+            img_ids_list = ImageIdentification.parse(image_id_metadata)
+        except Exception:
+            self.logger.exception(f"Error parsing {image_id_metadata}")
+            return []
+
+        self.logger.debug(f"Found image ids {ImageIdentification.list2string(img_ids_list)} "
+                          f"for {rbd_pool}/{rbd_image}")
+
+        return img_ids_list
+
+    def set_image_identification(self, rbd_pool: str, rbd_image: str, img_id: ImageIdentification):
+        assert img_id, "Can't set an empty image id"
+
+        img_id_value = ""
+        img_ids_list = self.get_image_identification(rbd_pool, rbd_image)
+        for one_id in img_ids_list:
+            if one_id.is_same_image_id(img_id):
+                self.logger.debug(f"Image id {img_id} already included in "
+                                  f"{ImageIdentification.list2string(img_ids_list)}")
+                return
+            img_id_value += f"{one_id}{ImageIdentification.DELIMITER}"
+
+        img_id_value += f"{img_id}"
+
+        try:
+            self.ceph_utils.set_image_metadata(rbd_pool, rbd_image,
+                                               CephUtils.METADATA_KEY_IMAGE_ID,
+                                               img_id_value)
+            self.logger.debug(f"set image id {img_id_value} for {rbd_pool}/{rbd_image}")
+        except Exception:
+            self.logger.exception(f"Error setting image identification {img_id_value} for "
+                                  f"{rbd_pool}{rbd_image}")
+
+    def delete_image_identification(self, rbd_pool: str,
+                                    rbd_image: str, img_id: ImageIdentification):
+        assert img_id, "Can't delete an empty image id"
+
+        img_id_value = ""
+        img_ids_list = self.get_image_identification(rbd_pool, rbd_image)
+        for one_id in img_ids_list:
+            if one_id.is_same_image_id(img_id):
+                self.logger.debug(f"Image id {img_id} was found in "
+                                  f"{ImageIdentification.list2string(img_ids_list)}")
+                continue
+            img_id_value += f"{one_id}{ImageIdentification.DELIMITER}"
+
+        img_id_value = img_id_value.removesuffix(ImageIdentification.DELIMITER)
+
+        if not img_id_value:
+            try:
+                self.ceph_utils.remove_image_metadata(rbd_pool, rbd_image,
+                                                      CephUtils.METADATA_KEY_IMAGE_ID)
+                self.logger.debug(f"remove all image ids for {rbd_pool}/{rbd_image}")
+            except Exception:
+                self.logger.exception(f"Error removing image identifications for "
+                                      f"{rbd_pool}/{rbd_image}")
+        else:
+            try:
+                self.ceph_utils.set_image_metadata(rbd_pool, rbd_image,
+                                                   CephUtils.METADATA_KEY_IMAGE_ID,
+                                                   img_id_value)
+                self.logger.debug(f"set image id {img_id_value} for {rbd_pool}/{rbd_image}")
+            except Exception:
+                self.logger.exception(f"Error setting image identification {img_id_value} for "
+                                      f"{rbd_pool}{rbd_image}")
+
     def create_bdev(self, anagrp: int, name, uuid, rbd_pool_name, rbd_image_name,
-                    block_size, create_image, trash_image, rbd_image_size, context, peer_msg=""):
+                    block_size, create_image, trash_image, rbd_image_size, disable_auto_resize,
+                    read_only, context, peer_msg=""):
         """Creates a bdev from an RBD image."""
 
         if create_image:
@@ -941,7 +1169,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if trash_image:
             trsh_msg = "will trash the image on namespace delete, "
 
-        self.logger.info(f"Received request to create bdev {name} from"
+        if read_only:
+            ro_msg = "read only"
+        else:
+            ro_msg = "read write"
+
+        self.logger.info(f"Received request to create {ro_msg} bdev {name} from"
                          f" {rbd_pool_name}/{rbd_image_name} (size {rbd_image_size} bytes)"
                          f" with block size {block_size}, {cr_img_msg}, {trsh_msg}"
                          f"context={context}{peer_msg}")
@@ -1008,7 +1241,16 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 return BdevStatus(status=errcode,
                                   error_message=f"Failure creating bdev {name}: {errmsg}")
 
+        if disable_auto_resize:
+            try:
+                self._set_image_auto_resize(rbd_pool_name, rbd_image_name, False)
+            except Exception as ex:
+                self.logger.warning(f"Error setting auto resize flag for image "
+                                    f"{rbd_pool_name}/{rbd_image_name}, namespace "
+                                    f"will get resized in case of an image resize:\n{ex}")
+
         cluster_name = None
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling bdev_rbd_create()"
         try:
             cluster_name = self.cluster_allocator.get_cluster(anagrp)
             bdev_name = rpc_bdev.bdev_rbd_create(
@@ -1019,6 +1261,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 rbd_name=rbd_image_name,
                 block_size=block_size,
                 uuid=uuid,
+                read_only=read_only,
             )
             with self.shared_state_lock:
                 self.bdev_cluster[name] = cluster_name
@@ -1081,7 +1324,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if rbd_pool_name and rbd_image_name:
             try:
                 current_size = self.ceph_utils.get_image_size(rbd_pool_name, rbd_image_name)
-                if current_size > new_size * 1024 * 1024:
+                # a new size of 0 is a special case to instruct SPDK to not change the size
+                # and only send a notification to update its internal data
+                if new_size > 0 and current_size > new_size * 1024 * 1024:
                     return pb2.req_status(status=errno.EINVAL,
                                           error_message=f"new size {new_size * 1024 * 1024} bytes "
                                                         f"is smaller than current size "
@@ -1182,6 +1427,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def create_subsystem_safe(self, request, context):
         """Creates a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling create_subsystem_safe()"
         create_subsystem_error_prefix = f"Failure creating subsystem {request.subsystem_nqn}"
         peer_msg = self.get_peer_message(context)
 
@@ -1270,6 +1516,14 @@ class GatewayService(pb2_grpc.GatewayServicer):
         with omap_lock:
             if not request.max_namespaces:
                 request.max_namespaces = self.max_namespaces_per_subsystem
+
+            if request.max_namespaces >= Rebalance.INVALID_LOAD_BALANCING_GROUP:
+                errmsg = f"{create_subsystem_error_prefix}: Maximal number of namespaces " \
+                         f"({request.max_namespaces}) is too big"
+                self.logger.error(errmsg)
+                return pb2.subsys_status(status=errno.E2BIG,
+                                         error_message=errmsg,
+                                         nqn=request.subsystem_nqn)
 
             if not request.serial_number:
                 random.seed()
@@ -1438,6 +1692,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def delete_subsystem_safe(self, request, context):
         """Deletes a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling delete_subsystem_safe()"
         delete_subsystem_error_prefix = f"Failure deleting subsystem {request.subsystem_nqn}"
 
         ret = False
@@ -1512,7 +1767,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         # We found a namespace still using this subsystem and --force wasn't used fail with EBUSY
         if not request.force and len(ns_list) > 0:
             errmsg = f"{delete_subsystem_error_prefix}: Namespace {ns_list[0]} is still using " \
-                     f"the subsystem. Either remove it or use the '--force' command line option"
+                     f"the subsystem. Either remove it or use the \"--force\" command line option"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EBUSY, error_message=errmsg)
 
@@ -1531,11 +1786,27 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 self.logger.warning(f"Will continue deleting {request.subsystem_nqn} anyway")
         return self.execute_grpc_function(self.delete_subsystem_safe, request, context)
 
-    def check_if_image_used(self, pool_name, image_name):
+    def check_if_image_used(self, pool_name, image_name, uuid):
         """Check if image is used by any other namespace."""
 
         errmsg = ""
         nqn = None
+
+        img_ids_list = self.get_image_identification(pool_name, image_name)
+        for img_id in img_ids_list:
+            if not img_id.empty():
+                if not img_id.is_same_group(self.gateway_group):
+                    grp_txt = f", group {img_id.group_name}" if img_id.group_name else ""
+                    errmsg = f"RBD image {pool_name}/{image_name} is already used by a namespace " \
+                             f"in subsystem {img_id.subsys}{grp_txt}"
+                    return errmsg, img_id.subsys
+                if not img_id.is_same_uuid(uuid):
+                    uuid_txt = f"with UUID {img_id.uuid} " if img_id.uuid else ""
+                    errmsg = f"RBD image {pool_name}/{image_name} is already used by a namespace " \
+                             f"{uuid_txt}" \
+                             f"in subsystem {img_id.subsys}, group {img_id.group_name}"
+                    return errmsg, img_id.subsys
+
         state = self.gateway_state.local.get_state()
         for key, val in state.items():
             if not key.startswith(self.gateway_state.local.NAMESPACE_PREFIX):
@@ -1555,9 +1826,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
         return errmsg, nqn
 
     def create_namespace(self, subsystem_nqn, bdev_name, nsid, anagrpid, uuid,
-                         auto_visible, rbd_pool, rbd_image_name, trash_image, context):
+                         auto_visible, rbd_pool, rbd_image_name, trash_image, read_only, context):
         """Adds a namespace to a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling create_namespace()"
         assert context is None or self.omap_lock.write_locked_by_me(), \
             f"OMAP is unlocked when calling create_namespace()\n" \
             f"in thread: {threading.get_native_id()}. Locked by: " \
@@ -1650,7 +1922,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                             bdev_name, uuid,
                                                             anagrpid, auto_visible,
                                                             rbd_pool, rbd_image_name,
-                                                            trash_image)
+                                                            trash_image, read_only)
             self.logger.debug(f"subsystem_add_ns: {nsid}")
             self.ana_grp_ns_load[anagrpid] += 1
             if anagrpid in self.ana_grp_subs_load:
@@ -1690,6 +1962,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         """Sets ana state for this gateway."""
         self.logger.info(f"Received request to set ana states {ana_info.states}, {peer_msg}")
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling set_ana_state_safe()"
         inaccessible_ana_groups = {}
         awaited_cluster_contexts = set()
         # Iterate over nqn_ana_states in ana_info
@@ -1749,7 +2022,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
                         self.logger.debug(f"set_ana_state nvmf_subsystem_listener_set_ana_state "
                                           f"{nqn=} {listener=} {ana_state=} {grp_id=}")
-                        (adrfam, traddr, trsvcid, secure) = listener
+                        (adrfam, traddr, trsvcid, secure, active) = listener
+                        if not active:
+                            continue
                         ret = rpc_nvmf.nvmf_subsystem_listener_set_ana_state(
                             self.spdk_rpc_client,
                             nqn=nqn,
@@ -1774,31 +2049,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
                         return pb2.req_status()
         return pb2.req_status(status=True)
 
-    def choose_anagrpid_for_namespace(self, nsid) -> int:
-        grps_list = self.ceph_utils.get_number_created_gateways(self.gateway_pool,
-                                                                self.gateway_group)
-        for ana_grp in grps_list:
-            if self.ana_grp_ns_load[ana_grp] == 0:
-                # still no namespaces in this ana-group - probably the new GW  added
-                self.logger.info(f"New GW created: chosen ana group {ana_grp} for ns {nsid} ")
-                return ana_grp
-        min_load = 2000
-        chosen_ana_group = 0
-        for ana_grp in self.ana_grp_ns_load:
-            if ana_grp in grps_list:
-                self.logger.info(f" ana group {ana_grp} load = {self.ana_grp_ns_load[ana_grp]}  ")
-                if self.ana_grp_ns_load[ana_grp] <= min_load:
-                    min_load = self.ana_grp_ns_load[ana_grp]
-                    chosen_ana_group = ana_grp
-                    self.logger.info(f" ana group {ana_grp} load = {self.ana_grp_ns_load[ana_grp]}"
-                                     f" set as min {min_load} ")
-        self.logger.info(f"Found min loaded cluster: chosen ana group {chosen_ana_group} "
-                         f"for ID {nsid}")
-        return chosen_ana_group
-
     def namespace_add_safe(self, request, context):
         """Adds a namespace to a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_add_safe()"
         if not request.subsystem_nqn:
             errmsg = "Failure adding namespace, missing subsystem NQN"
             self.logger.error(errmsg)
@@ -1813,6 +2067,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self.logger.info(f"Received request to add namespace {nsid_msg}to "
                          f"{request.subsystem_nqn}, ana group {request.anagrpid}, "
                          f"no_auto_visible: {request.no_auto_visible}, "
+                         f"disable_auto_resize: {request.disable_auto_resize}, "
+                         f"read_only: {request.read_only}, "
                          f"context: {context}{peer_msg}")
 
         if not request.uuid:
@@ -1824,12 +2080,11 @@ class GatewayService(pb2_grpc.GatewayServicer):
             request.trash_image = False
 
         if context:
-            if request.anagrpid != 0:
-                grps_list = self.ceph_utils.get_number_created_gateways(self.gateway_pool,
-                                                                        self.gateway_group)
-            else:
-                anagrp = self.choose_anagrpid_for_namespace(request.nsid)
-                assert anagrp != 0, "Chosen load balancing group is 0"
+            grps_list = self.ceph_utils.get_number_created_gateways(self.gateway_pool,
+                                                                    self.gateway_group)
+            min_load, anagrp = \
+                self.rebalance.find_min_loaded_group_in_subsys(request.subsystem_nqn, grps_list)
+            assert anagrp != 0, "Chosen load balancing group is 0"
 
             if request.nsid:
                 ns = self.subsystem_nsid_bdev_and_uuid.find_namespace(request.subsystem_nqn,
@@ -1850,7 +2105,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
         with omap_lock:
             if context:
                 errmsg, ns_nqn = self.check_if_image_used(request.rbd_pool_name,
-                                                          request.rbd_image_name)
+                                                          request.rbd_image_name,
+                                                          request.uuid)
                 if errmsg and ns_nqn:
                     if request.force:
                         self.logger.warning(f"{errmsg}, will continue as the \"force\" "
@@ -1883,7 +2139,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
             anagrp = request.anagrpid
             ret_bdev = self.create_bdev(anagrp, bdev_name, request.uuid, request.rbd_pool_name,
                                         request.rbd_image_name, request.block_size, create_image,
-                                        request.trash_image, request.size, context, peer_msg)
+                                        request.trash_image, request.size,
+                                        request.disable_auto_resize, request.read_only,
+                                        context, peer_msg)
             if ret_bdev.status != 0:
                 errmsg = f"Failure adding namespace {nsid_msg}to {request.subsystem_nqn}: " \
                          f"{ret_bdev.error_message}"
@@ -1910,7 +2168,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                            request.nsid, anagrp, request.uuid,
                                            not request.no_auto_visible,
                                            ret_bdev.rbd_pool, ret_bdev.rbd_image_name,
-                                           ret_bdev.trash_image, context)
+                                           ret_bdev.trash_image, request.read_only, context)
             if ret_ns.status == 0 and request.nsid and ret_ns.nsid != request.nsid:
                 errmsg = f"Returned ID {ret_ns.nsid} differs from requested one {request.nsid}"
                 self.logger.error(errmsg)
@@ -1953,7 +2211,14 @@ class GatewayService(pb2_grpc.GatewayServicer):
                         pass
                     if ret_bdev.trash_image:
                         self.delete_rbd_image(ret_bdev.rbd_pool, ret_bdev.rbd_image_name)
-                    return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+                    return pb2.nsid_status(status=errno.EINVAL, error_message=errmsg)
+
+            img_id = ImageIdentification(self.gateway_group,
+                                         request.subsystem_nqn,
+                                         request.uuid)
+            self.set_image_identification(request.rbd_pool_name,
+                                          request.rbd_image_name,
+                                          img_id)
 
         return pb2.nsid_status(status=0, error_message=os.strerror(0), nsid=ret_ns.nsid)
 
@@ -1964,6 +2229,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_change_load_balancing_group_safe(self, request, context):
         """Changes a namespace load balancing group."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling namespace_change_load_balancing_group_safe()"
         grps_list = []
         peer_msg = self.get_peer_message(context)
         change_lb_group_failure_prefix = f"Failure changing load balancing group for namespace " \
@@ -2011,6 +2278,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 try:
                     state_ns = state[ns_key]
                     ns_entry = json.loads(state_ns)
+                    GatewayService.fill_namespace_missing_fields(ns_entry)
                 except Exception:
                     errmsg = f"{change_lb_group_failure_prefix}: Can't find entry for " \
                              f"namespace {request.nsid} in {request.subsystem_nqn}"
@@ -2020,12 +2288,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     anagrp = ns_entry["anagrpid"]
                     gw_id = self.ceph_utils.get_gw_id_owner_ana_group(
                         self.gateway_pool, self.gateway_group, anagrp)
-                    self.logger.debug(f"ANA group of ns#{request.nsid} - {anagrp} is owned by "
-                                      f"gateway {gw_id}, self.name is {self.gateway_name}")
-                    if self.gateway_name != gw_id:
-                        errmsg = f"ANA group of ns#{request.nsid} - {anagrp} is owned by " \
-                                 f"gateway {gw_id} so try this command from it, this gateway " \
-                                 f"name is {self.gateway_name}"
+                    self.logger.debug(f"Load balancing group of ns#{request.nsid} - {anagrp} is "
+                                      f"owned by gateway {gw_id}, self.name is {self.gateway_name}")
+                    if gw_id is not None and self.gateway_name != gw_id:
+                        errmsg = f"Load balancing group of ns#{request.nsid} - {anagrp} is " \
+                                 f"owned by gateway {gw_id}, try running the command from " \
+                                 f"there.\nThis gateway name is {self.gateway_name}"
                         self.logger.error(errmsg)
                         return pb2.req_status(status=errno.EEXIST, error_message=errmsg)
 
@@ -2086,7 +2354,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                     trash_image=ns_entry["trash_image"],
                                                     size=int(ns_entry["size"]),
                                                     force=ns_entry["force"],
-                                                    no_auto_visible=ns_entry["no_auto_visible"])
+                                                    no_auto_visible=ns_entry["no_auto_visible"],
+                                                    disable_auto_resize=ns_entry[
+                                                    "disable_auto_resize"],
+                                                    read_only=ns_entry["read_only"])
                     json_req = json_format.MessageToJson(
                         add_req, preserving_proto_field_name=True,
                         including_default_value_fields=True)
@@ -2101,6 +2372,29 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
         return pb2.req_status(status=0, error_message=os.strerror(0))
 
+    @staticmethod
+    def fill_namespace_missing_fields(ns: pb2.namespace_add_req):
+        try:
+            ns["trash_image"]
+        except KeyError:
+            ns["trash_image"] = False
+        try:
+            ns["no_auto_visible"]
+        except KeyError:
+            ns["no_auto_visible"] = False
+        try:
+            ns["disable_auto_resize"]
+        except KeyError:
+            ns["disable_auto_resize"] = False
+        try:
+            ns["read_only"]
+        except KeyError:
+            ns["read_only"] = False
+        try:
+            ns["force"]
+        except KeyError:
+            ns["force"] = False
+
     def namespace_change_load_balancing_group(self, request, context=None):
         """Changes a namespace load balancing group."""
         return self.execute_grpc_function(self.namespace_change_load_balancing_group_safe,
@@ -2108,6 +2402,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def subsystem_has_connections(self, subsys: str) -> bool:
         assert subsys, "Subsystem NQN is empty"
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling subsystem_has_connections()"
         try:
             ctrl_ret = rpc_nvmf.nvmf_subsystem_get_controllers(self.spdk_rpc_client, nqn=subsys)
         except Exception:
@@ -2119,6 +2414,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_change_visibility_safe(self, request, context):
         """Changes namespace visibility."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling namespace_change_visibility_safe()"
         peer_msg = self.get_peer_message(context)
         failure_prefix = f"Failure changing visibility for namespace {request.nsid} " \
                          f"in {request.subsystem_nqn}"
@@ -2140,10 +2437,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
 
         # If this is not set the subsystem was not created yet
-        if request.subsystem_nqn not in self.subsys_max_ns:
+        if request.subsystem_nqn not in self.subsys_serial:
             errmsg = f"{failure_prefix}: Can't find subsystem"
             self.logger.error(errmsg)
-            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
             request.subsystem_nqn, request.nsid)
@@ -2191,6 +2488,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 try:
                     state_ns = state[ns_key]
                     ns_entry = json.loads(state_ns)
+                    GatewayService.fill_namespace_missing_fields(ns_entry)
                     if ns_entry["no_auto_visible"] == (not request.auto_visible):
                         self.logger.warning(f"No change to namespace {request.nsid} in "
                                             f"{request.subsystem_nqn} visibility, nothing to do")
@@ -2242,7 +2540,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                     trash_image=ns_entry["trash_image"],
                                                     size=int(ns_entry["size"]),
                                                     force=ns_entry["force"],
-                                                    no_auto_visible=not request.auto_visible)
+                                                    no_auto_visible=not request.auto_visible,
+                                                    disable_auto_resize=ns_entry[
+                                                    "disable_auto_resize"],
+                                                    read_only=ns_entry["read_only"])
                     json_req = json_format.MessageToJson(
                         add_req, preserving_proto_field_name=True,
                         including_default_value_fields=True)
@@ -2263,6 +2564,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_set_rbd_trash_image_safe(self, request, context=None):
         """Changes RBD trash image flag for a namespace."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling namespace_set_rbd_trash_image_safe()"
         peer_msg = self.get_peer_message(context)
         failure_prefix = f"Failure setting RBD trash image flag for namespace {request.nsid} " \
                          f"in {request.subsystem_nqn}"
@@ -2277,13 +2580,20 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if not request.nsid:
             errmsg = "Failure setting RBD trash image flag for namespace, missing ID"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
         if not request.subsystem_nqn:
             errmsg = f"Failure setting RBD trash image flag for namespace {request.nsid}, " \
                      f"missing subsystem NQN"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"Failure setting RBD trash image flag for namespace {request.nsid}, " \
+                     f"can't find subsystem \"{request.subsystem_nqn}\""
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
             request.subsystem_nqn, request.nsid)
@@ -2315,6 +2625,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 try:
                     state_ns = state[ns_key]
                     ns_entry = json.loads(state_ns)
+                    GatewayService.fill_namespace_missing_fields(ns_entry)
                     if ns_entry["trash_image"] == request.trash_image:
                         self.logger.warning(f"Namespace {request.nsid} in {request.subsystem_nqn} "
                                             f"already has the RBD trash image flag set to the "
@@ -2341,7 +2652,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                     trash_image=request.trash_image,
                                                     size=int(ns_entry["size"]),
                                                     force=ns_entry["force"],
-                                                    no_auto_visible=ns_entry["no_auto_visible"])
+                                                    no_auto_visible=ns_entry["no_auto_visible"],
+                                                    disable_auto_resize=ns_entry[
+                                                    "disable_auto_resize"],
+                                                    read_only=ns_entry["read_only"])
                     json_req = json_format.MessageToJson(
                         add_req, preserving_proto_field_name=True,
                         including_default_value_fields=True)
@@ -2361,6 +2675,92 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_set_rbd_trash_image(self, request, context=None):
         """Changes RBD trash image flag for a namespace."""
         return self.execute_grpc_function(self.namespace_set_rbd_trash_image_safe, request, context)
+
+    def _set_image_auto_resize(self, rbd_pool: str, rbd_image: str, value: bool) -> None:
+        if value:
+            self.ceph_utils.remove_image_metadata(rbd_pool, rbd_image,
+                                                  CephUtils.METADATA_KEY_AUTO_RESIZE)
+        else:
+            self.ceph_utils.set_image_metadata(rbd_pool, rbd_image,
+                                               CephUtils.METADATA_KEY_AUTO_RESIZE,
+                                               CephUtils.METADATA_VALUE_NO_AUTO_RESIZE)
+
+    def _is_auto_resize_disabled_for_image(self, rbd_pool: str, rbd_image: str) -> bool:
+        try:
+            auto_resize_metadata = self.ceph_utils.get_image_metadata(
+                rbd_pool, rbd_image, CephUtils.METADATA_KEY_AUTO_RESIZE)
+            if auto_resize_metadata is None:
+                return False
+            return auto_resize_metadata.lower() == CephUtils.METADATA_VALUE_NO_AUTO_RESIZE.lower()
+        except KeyError:
+            pass
+        except Exception:
+            self.logger.exception(f"Error getting auto resize flag for image "
+                                  f"{rbd_pool}/{rbd_image}")
+        return False
+
+    def namespace_set_auto_resize_safe(self, request, context=None):
+        """Sets auto resie flag for a namespace."""
+
+        peer_msg = self.get_peer_message(context)
+        failure_prefix = f"Failure setting auto resize flag for namespace {request.nsid} " \
+                         f"in {request.subsystem_nqn}"
+        auto_resize_txt = "auto resize namespace\""
+        if not request.auto_resize:
+            auto_resize_txt = "do not " + auto_resize_txt
+        auto_resize_txt = "\"" + auto_resize_txt
+        self.logger.info(f"Received request to set the auto resize flag of namespace "
+                         f"{request.nsid} in {request.subsystem_nqn} to {auto_resize_txt}, "
+                         f"context: {context}{peer_msg}")
+
+        if not request.nsid:
+            errmsg = "Failure setting auto resize flag for namespace, missing ID"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        if not request.subsystem_nqn:
+            errmsg = f"Failure setting auto resize flag for namespace {request.nsid}, " \
+                     f"missing subsystem NQN"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"Failure setting auto resize flag for namespace {request.nsid}, " \
+                     f"can't find subsystem \"{request.subsystem_nqn}\""
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
+
+        find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
+            request.subsystem_nqn, request.nsid)
+        if find_ret.empty():
+            errmsg = f"{failure_prefix}: Can't find namespace"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+
+        if not find_ret.pool:
+            errmsg = f"{failure_prefix}: Can't find namespace RBD pool"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+
+        if not find_ret.image:
+            errmsg = f"{failure_prefix}: Can't find namespace RBD image"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+
+        try:
+            self._set_image_auto_resize(find_ret.pool, find_ret.image, request.auto_resize)
+        except Exception:
+            errmsg = f"Error setting auto resize flag for image " \
+                     f"{find_ret.pool}/{find_ret.image}"
+            self.logger.exception(f"{errmsg}")
+            return pb2.req_status(status=errno.EIO, error_message=errmsg)
+
+        return pb2.req_status(status=0, error_message=os.strerror(0))
+
+    def namespace_set_auto_resize(self, request, context=None):
+        """Sets auto resie flag for a namespace."""
+        return self.execute_grpc_function(self.namespace_set_auto_resize_safe, request, context)
 
     def remove_namespace_from_state(self, nqn, nsid, context):
         if not context:
@@ -2399,6 +2799,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def remove_namespace(self, subsystem_nqn, nsid, context):
         """Removes a namespace from a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling remove_namespace()"
         assert context is None or self.omap_lock.write_locked_by_me(), \
             f"OMAP is unlocked when calling remove_namespace()\n" \
             f"in thread: {threading.get_native_id()}. Locked by: " \
@@ -2427,7 +2828,6 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 subsystem_nqn, nsid)
             self.ana_grp_ns_load[anagrpid] -= 1
             self.ana_grp_subs_load[anagrpid][subsystem_nqn] -= 1
-
         except Exception as ex:
             self.logger.exception(namespace_failure_prefix)
             errmsg = f"{namespace_failure_prefix}:\n{ex}"
@@ -2452,6 +2852,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         ret_bdev = None
         try:
             bdevs = rpc_bdev.bdev_get_bdevs(self.spdk_rpc_client, name=bdev_name)
+            self.logger.debug(f"bdev_get_bdevs: {bdevs}")
             if (len(bdevs) > 1):
                 self.logger.warning(f"Got {len(bdevs)} bdevs for bdev name {bdev_name}, "
                                     f"will use the first one")
@@ -2547,7 +2948,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                                                auto_visible=find_ret.auto_visible,
                                                hosts=find_ret.host_list,
                                                ns_subsystem_nqn=subsys_nqn,
-                                               trash_image=find_ret.trash_image)
+                                               trash_image=find_ret.trash_image,
+                                               read_only=find_ret.read_only)
                     with self.rpc_lock:
                         ns_bdev = self.get_bdev_info(bdev_name)
                     if ns_bdev is None:
@@ -2573,6 +2975,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                         except Exception:
                             self.logger.exception(f"{ns_bdev=} parse error")
                             pass
+                        one_ns.disable_auto_resize = self._is_auto_resize_disabled_for_image(
+                            one_ns.rbd_pool_name, one_ns.rbd_image_name)
                     namespaces.append(one_ns)
                 if request.subsystem != GatewayUtils.ALL_SUBSYSTEMS:
                     break
@@ -2602,6 +3006,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
             errmsg = f"Failure getting IO stats for namespace {request.nsid}, missing subsystem NQN"
             self.logger.error(errmsg)
             return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"Failure getting IO stats for namespace {request.nsid}, can't find " \
+                     f"subsystem \"{request.subsystem_nqn}\""
+            self.logger.error(errmsg)
+            return pb2.namespace_io_stats_info(status=errno.ENOENT, error_message=errmsg)
 
         with self.rpc_lock:
             find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
@@ -2711,6 +3122,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_set_qos_limits_safe(self, request, context):
         """Set namespace's qos limits."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling namespace_set_qos_limits_safe()"
         max_mb_per_second = int(0xffffffffffffffff / (1024 * 1024))
 
         failure_prefix = f"Failure setting QOS limits for namespace {request.nsid} " \
@@ -2718,19 +3131,25 @@ class GatewayService(pb2_grpc.GatewayServicer):
         peer_msg = self.get_peer_message(context)
         limits_to_set = self.get_qos_limits_string(request)
         self.logger.info(f"Received request to set QOS limits for namespace {request.nsid} "
-                         f"on {request.subsystem_nqn},{limits_to_set}, "
+                         f"on {request.subsystem_nqn},{limits_to_set}, force: {request.force}, "
                          f"context: {context}{peer_msg}")
 
         if not request.nsid:
             errmsg = "Failure setting QOS limits for namespace, missing ID"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
         if not request.subsystem_nqn:
             errmsg = f"Failure setting QOS limits for namespace {request.nsid}, " \
                      f"missing subsystem NQN"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.EINVAL, error_message=errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"{failure_prefix}: Can't find subsystem"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         find_ret = self.subsystem_nsid_bdev_and_uuid.find_namespace(
             request.subsystem_nqn, request.nsid)
@@ -2743,6 +3162,24 @@ class GatewayService(pb2_grpc.GatewayServicer):
             errmsg = f"{failure_prefix}: Can't find associated block device"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+
+        try:
+            if self.ceph_utils.were_image_qos_limits_changed(find_ret.pool, find_ret.image):
+                if request.force:
+                    self.logger.warning(f"The QOS limits for image "
+                                        f"{find_ret.pool}/{find_ret.image} were changed, will "
+                                        f"continue as the \"--force\" parameter was used")
+                else:
+                    errmsg = f"{failure_prefix}: QOS limits were changed for RBD image " \
+                             f"{find_ret.pool}/{find_ret.image}, use the \"--force\" parameter " \
+                             f"to set limits anyway"
+                    self.logger.error(errmsg)
+                    return pb2.req_status(status=errno.EEXIST, error_message=errmsg)
+        except Exception:
+            self.logger.warning(f"Error trying to get the config attributes of image "
+                                f"{find_ret.pool}/{find_ret.image}, can't check "
+                                f"for QOS changes")
+            pass
 
         if request.HasField("rw_ios_per_second"):
             if request.rw_ios_per_second % 1000 != 0:
@@ -2861,6 +3298,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_resize_safe(self, request, context=None):
         """Resize a namespace."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_resize_safe()"
         failure_prefix = f"Failure resizing namespace {request.nsid} on {request.subsystem_nqn}"
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to resize namespace {request.nsid} on "
@@ -2877,7 +3315,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
-        if request.new_size <= 0:
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"{failure_prefix}: Can't find subsystem"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
+
+        if request.new_size < 0:
             errmsg = f"{failure_prefix}: New size must be positive"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
@@ -2926,6 +3370,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_delete_safe(self, request, context):
         """Delete a namespace."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_delete_safe()"
         if not request.nsid:
             errmsg = "Failure deleting namespace, missing ID"
             self.logger.error(errmsg)
@@ -2935,6 +3380,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
             errmsg = f"Failure deleting namespace {request.nsid}, missing subsystem NQN"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            errmsg = f"Failure deleting namespace {request.nsid}, can't find subsystem " \
+                     f"\"{request.subsystem_nqn}\""
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         peer_msg = self.get_peer_message(context)
         i_am_sure_msg = "I am sure, " if request.i_am_sure else ""
@@ -2986,18 +3438,24 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 return ret
 
             self.remove_namespace_from_state(request.subsystem_nqn, request.nsid, context)
-            self.subsystem_nsid_bdev_and_uuid.remove_namespace(request.subsystem_nqn, request.nsid)
-            if bdev_name:
-                ret_del = self.delete_bdev(bdev_name, peer_msg=peer_msg)
-                if ret_del.status != 0:
-                    errmsg = f"Failure deleting namespace {request.nsid} from " \
-                             f"{request.subsystem_nqn}: {ret_del.error_message}"
-                    self.logger.error(errmsg)
-                    if find_ret.trash_image:
-                        self.delete_rbd_image(rbd_pool, rbd_image_name)
-                    return pb2.nsid_status(status=ret_del.status, error_message=errmsg)
-            if find_ret.trash_image:
-                self.delete_rbd_image(rbd_pool, rbd_image_name)
+
+        self.delete_image_identification(find_ret.pool, find_ret.image,
+                                         ImageIdentification(self.gateway_group,
+                                                             request.subsystem_nqn,
+                                                             find_ret.uuid))
+        self.subsystem_nsid_bdev_and_uuid.remove_namespace(request.subsystem_nqn, request.nsid)
+        if bdev_name:
+            ret_del = self.delete_bdev(bdev_name, peer_msg=peer_msg)
+            if ret_del.status != 0:
+                errmsg = f"Failure deleting namespace {request.nsid} from " \
+                         f"{request.subsystem_nqn}: {ret_del.error_message}"
+                self.logger.error(errmsg)
+                if find_ret.trash_image:
+                    self.delete_rbd_image(rbd_pool, rbd_image_name)
+                return pb2.nsid_status(status=ret_del.status, error_message=errmsg)
+
+        if find_ret.trash_image:
+            self.delete_rbd_image(rbd_pool, rbd_image_name)
 
         return pb2.req_status(status=0, error_message=os.strerror(0))
 
@@ -3008,11 +3466,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_add_host_safe(self, request, context):
         """Add a host to a namespace."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_add_host_safe()"
         peer_msg = self.get_peer_message(context)
         failure_prefix = f"Failure adding host {request.host_nqn} to namespace " \
                          f"{request.nsid} on {request.subsystem_nqn}"
         self.logger.info(f"Received request to add host {request.host_nqn} to namespace "
-                         f"{request.nsid} on {request.subsystem_nqn}, "
+                         f"{request.nsid} on {request.subsystem_nqn}, force: {request.force}, "
                          f"context: {context}{peer_msg}")
 
         if not request.nsid:
@@ -3033,10 +3492,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
         # If this is not set the subsystem was not created yet
-        if request.subsystem_nqn not in self.subsys_max_ns:
+        if request.subsystem_nqn not in self.subsys_serial:
             errmsg = f"{failure_prefix}: Can't find subsystem"
             self.logger.error(errmsg)
-            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         if request.host_nqn == "*":
             errmsg = f"{failure_prefix}: Host NQN can't be \"*\""
@@ -3070,7 +3529,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if find_ret.empty():
             errmsg = f"{failure_prefix}: Can't find namespace"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
 
         if find_ret.auto_visible:
             errmsg = f"{failure_prefix}: Namespace is visible to all hosts"
@@ -3082,6 +3541,22 @@ class GatewayService(pb2_grpc.GatewayServicer):
                      f"({self.max_hosts_per_namespace}) has already been reached"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.E2BIG, error_message=errmsg)
+
+        host_allowed = self.host_info.is_any_host_allowed(request.subsystem_nqn)
+        if not host_allowed:
+            host_allowed = self.host_info.does_host_exist(request.subsystem_nqn, request.host_nqn)
+
+        if not host_allowed:
+            if request.force:
+                self.logger.info(f"Host {request.host_nqn} is not allowed to access "
+                                 f"subsystem {request.subsystem_nqn} but it will be added "
+                                 f"to namespace {request.nsid} as the \"--force\" parameter "
+                                 f"was used")
+            else:
+                errmsg = f"{failure_prefix}: Host is not allowed to access the subsystem, " \
+                         f"use the \"--force\" parameter to add the host anyway"
+                self.logger.error(errmsg)
+                return pb2.req_status(status=errno.EACCES, error_message=errmsg)
 
         omap_lock = self.omap_lock.get_omap_lock_to_use(context)
         with omap_lock:
@@ -3125,6 +3600,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def namespace_delete_host_safe(self, request, context):
         """Delete a host from a namespace."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling namespace_delete_host_safe()"
         peer_msg = self.get_peer_message(context)
         failure_prefix = f"Failure deleting host {request.host_nqn} from namespace " \
                          f"{request.nsid} on {request.subsystem_nqn}"
@@ -3150,10 +3626,10 @@ class GatewayService(pb2_grpc.GatewayServicer):
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
         # If this is not set the subsystem was not created yet
-        if request.subsystem_nqn not in self.subsys_max_ns:
+        if request.subsystem_nqn not in self.subsys_serial:
             errmsg = f"{failure_prefix}: Can't find subsystem"
             self.logger.error(errmsg)
-            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         if request.host_nqn == "*":
             errmsg = f"{failure_prefix}: Host NQN can't be \"*\""
@@ -3187,7 +3663,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         if find_ret.empty():
             errmsg = f"{failure_prefix}: Can't find namespace"
             self.logger.error(errmsg)
-            return pb2.namespace_io_stats_info(status=errno.ENODEV, error_message=errmsg)
+            return pb2.req_status(status=errno.ENODEV, error_message=errmsg)
 
         if find_ret.auto_visible:
             errmsg = f"{failure_prefix}: Namespace is visible to all hosts"
@@ -3297,6 +3773,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def _add_key_to_keyring(self, keytype, filename, keyname):
         if not keyname or not filename:
             return
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling _add_key_to_keyring()"
         keys = rpc_keyring.keyring_get_keys(self.spdk_rpc_client)
         old_filename = None
         for one_key in keys:
@@ -3328,6 +3805,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def add_host_safe(self, request, context):
         """Adds a host to a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling add_host_safe()"
         peer_msg = self.get_peer_message(context)
         if request.host_nqn == "*":
             self.logger.info(f"Received request to allow any host access for "
@@ -3351,6 +3829,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
                      f" contains invalid characters"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.subsystem_nqn not in self.subsys_serial:
+            pref = all_host_failure_prefix if request.host_nqn == "*" else host_failure_prefix
+            errmsg = f"{pref}: can't find subsystem {request.subsystem_nqn}"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         if request.host_nqn == "*":
             if self.host_info.does_subsystem_have_dhchap_key(request.subsystem_nqn):
@@ -3429,7 +3914,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
             secure = False
             try:
                 for listener in self.subsystem_listeners[request.subsystem_nqn]:
-                    (_, _, _, secure) = listener
+                    (_, _, _, secure, _) = listener
                     if secure:
                         errmsg = f"{all_host_failure_prefix}: Can't allow open host access " \
                                  f"on a subsystem with secure listeners"
@@ -3660,6 +4145,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def remove_host_safe(self, request, context):
         """Removes a host from a subsystem."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling remove_host_safe()"
         peer_msg = self.get_peer_message(context)
         all_host_failure_prefix = f"Failure disabling open host access to {request.subsystem_nqn}"
         host_failure_prefix = f"Failure removing host {request.host_nqn} access " \
@@ -3689,6 +4175,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 errmsg = f"{host_failure_prefix}: Can't use a discovery NQN as host's"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        removed_host_is_connected = self.is_host_connected(request.subsystem_nqn, request.host_nqn)
 
         omap_lock = self.omap_lock.get_omap_lock_to_use(context)
         with omap_lock:
@@ -3724,6 +4212,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     self.remove_all_host_key_files(request.subsystem_nqn, request.host_nqn)
                     self.remove_all_host_keys_from_keyring(request.subsystem_nqn, request.host_nqn)
                     self.host_info.remove_host_nqn(request.subsystem_nqn, request.host_nqn)
+                    self.host_info.reset_host_keepalive_timeout_disconnection(
+                        request.subsystem_nqn, request.host_nqn)
             except Exception as ex:
                 if request.host_nqn == "*":
                     self.logger.exception(all_host_failure_prefix)
@@ -3753,7 +4243,15 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 self.remove_host_from_state(request.subsystem_nqn, request.host_nqn, context)
                 return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
 
-            return self.remove_host_from_state(request.subsystem_nqn, request.host_nqn, context)
+            rc = self.remove_host_from_state(request.subsystem_nqn, request.host_nqn, context)
+            if rc.status == 0 and removed_host_is_connected:
+                rc.status = errno.EBUSY
+                rc.error_message = f"Host {request.host_nqn} is still connected to " \
+                                   f"{request.subsystem_nqn}\n" \
+                                   f"Reconnecting the host would fail unless " \
+                                   f"it is re-added to the subsystem."
+                self.logger.warning(rc.error_message)
+            return rc
 
     def remove_host(self, request, context=None):
         return self.execute_grpc_function(self.remove_host_safe, request, context)
@@ -3761,11 +4259,14 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def change_host_key_safe(self, request, context):
         """Changes host's inband authentication key."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling change_host_key_safe()"
         peer_msg = self.get_peer_message(context)
-        failure_prefix = f"Failure changing DH-HMAC-CHAP key for host {request.host_nqn} " \
+        cmd = "change" if request.dhchap_key else "delete"
+        cmd2 = "changing" if request.dhchap_key else "deleting"
+        failure_prefix = f"Failure {cmd2} DH-HMAC-CHAP key for host {request.host_nqn} " \
                          f"on subsystem {request.subsystem_nqn}"
         self.logger.info(
-            f"Received request to change inband authentication key for host {request.host_nqn} "
+            f"Received request to {cmd} inband authentication key for host {request.host_nqn} "
             f"on subsystem {request.subsystem_nqn}, context: {context}{peer_msg}")
 
         if request.host_nqn == "*":
@@ -3967,9 +4468,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def list_hosts_safe(self, request, context):
         """List hosts."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling list_hosts_safe()"
         peer_msg = self.get_peer_message(context)
-        self.logger.info(f"Received request to list hosts for "
-                         f"{request.subsystem}, context: {context}{peer_msg}")
+        log_level = logging.INFO if context else logging.DEBUG
+        self.logger.log(log_level, f"Received request to list hosts for "
+                                   f"{request.subsystem}, clear_alerts: {request.clear_alerts}, "
+                                   f"context: {context}{peer_msg}")
         try:
             ret = rpc_nvmf.nvmf_get_subsystems(self.spdk_rpc_client, nqn=request.subsystem)
             self.logger.debug(f"list_hosts: {ret}")
@@ -4002,8 +4506,15 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     host_nqn = h["nqn"]
                     psk = self.host_info.is_psk_host(request.subsystem, host_nqn)
                     dhchap = self.host_info.is_dhchap_host(request.subsystem, host_nqn)
-                    one_host = pb2.host(nqn=host_nqn, use_psk=psk, use_dhchap=dhchap)
+                    was_ka_timeout = \
+                        self.host_info.was_host_disconnected_due_to_keepalive_timeout(
+                            request.subsystem, host_nqn)
+                    one_host = pb2.host(nqn=host_nqn, use_psk=psk, use_dhchap=dhchap,
+                                        disconnected_due_to_keepalive_timeout=was_ka_timeout)
                     hosts.append(one_host)
+                    if was_ka_timeout and request.clear_alerts:
+                        self.host_info.reset_host_keepalive_timeout_disconnection(
+                            request.subsystem, host_nqn)
                 break
             except Exception:
                 self.logger.exception(f"{s=} parse error")
@@ -4021,65 +4532,93 @@ class GatewayService(pb2_grpc.GatewayServicer):
         peer_msg = self.get_peer_message(context)
         log_level = logging.INFO if context else logging.DEBUG
         self.logger.log(log_level,
-                        f"Received request to list connections for {request.subsystem},"
-                        f" context: {context}{peer_msg}")
+                        f"Received request to list connections for {request.subsystem}, "
+                        f"context: {context}{peer_msg}")
 
         if not request.subsystem:
-            errmsg = "Failure listing connections, missing subsystem NQN"
-            self.logger.error(errmsg)
-            return pb2.connections_info(status=errno.EINVAL, error_message=errmsg, connections=[])
+            request.subsystem = GatewayUtils.ALL_SUBSYSTEMS
 
+        if request.subsystem != GatewayUtils.ALL_SUBSYSTEMS:
+            return self.list_connection_for_one_subsystem(request.subsystem)
+
+        subsystems = list(self.subsys_serial.keys())
+        connections = []
+        for subsys in subsystems:
+            connections_info = self.list_connection_for_one_subsystem(subsys)
+            if connections_info.status != 0:
+                self.logger.warning(f"Failed listing connections for {subsys}, "
+                                    f"will continue with the other subsystems")
+            connections += connections_info.connections
+
+        return pb2.connections_info(status=0, error_message=os.strerror(0),
+                                    subsystem_nqn=GatewayUtils.ALL_SUBSYSTEMS,
+                                    connections=connections)
+
+    def is_host_connected(self, subsystem, hostnqn) -> bool:
+        if not hostnqn:
+            return False
+        if hostnqn == "*":
+            return False
+        connections = self.list_connection_for_one_subsystem(subsystem)
+        for one_conn in connections.connections:
+            if one_conn.connected and one_conn.nqn == hostnqn:
+                return True
+        return False
+
+    def list_connection_for_one_subsystem(self, subsystem):
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling list_connection_for_one_subsystem()"
         try:
-            qpair_ret = rpc_nvmf.nvmf_subsystem_get_qpairs(self.spdk_rpc_client,
-                                                           nqn=request.subsystem)
+            qpair_ret = rpc_nvmf.nvmf_subsystem_get_qpairs(self.spdk_rpc_client, nqn=subsystem)
             self.logger.debug(f"list_connections get_qpairs: {qpair_ret}")
         except Exception as ex:
-            errmsg = "Failure listing connections, can't get qpairs"
+            errmsg = f"Failure listing connections for {subsystem}, can't get qpairs"
             self.logger.exception(errmsg)
             errmsg = f"{errmsg}:\n{ex}"
             resp = self.parse_json_exeption(ex)
             status = errno.EINVAL
             if resp:
                 status = resp["code"]
-                errmsg = f"Failure listing connections, can't get qpairs: {resp['message']}"
+                errmsg = f"Failure listing connections for {subsystem}, " \
+                         f"can't get qpairs: {resp['message']}"
             return pb2.connections_info(status=status, error_message=errmsg, connections=[])
 
         try:
-            ctrl_ret = rpc_nvmf.nvmf_subsystem_get_controllers(self.spdk_rpc_client,
-                                                               nqn=request.subsystem)
+            ctrl_ret = rpc_nvmf.nvmf_subsystem_get_controllers(self.spdk_rpc_client, nqn=subsystem)
             self.logger.debug(f"list_connections get_controllers: {ctrl_ret}")
         except Exception as ex:
-            errmsg = "Failure listing connections, can't get controllers"
+            errmsg = f"Failure listing connections for {subsystem}, can't get controllers"
             self.logger.exception(errmsg)
             errmsg = f"{errmsg}:\n{ex}"
             resp = self.parse_json_exeption(ex)
             status = errno.EINVAL
             if resp:
                 status = resp["code"]
-                errmsg = f"Failure listing connections, can't get controllers: {resp['message']}"
+                errmsg = f"Failure listing connections for {subsystem}, " \
+                         f"can't get controllers: {resp['message']}"
             return pb2.connections_info(status=status, error_message=errmsg, connections=[])
 
         try:
-            subsys_ret = rpc_nvmf.nvmf_get_subsystems(self.spdk_rpc_client, nqn=request.subsystem)
+            subsys_ret = rpc_nvmf.nvmf_get_subsystems(self.spdk_rpc_client, nqn=subsystem)
             self.logger.debug(f"list_connections subsystems: {subsys_ret}")
         except Exception as ex:
-            errmsg = "Failure listing connections, can't get subsystems"
+            errmsg = f"Failure listing connections for {subsystem}, can't get subsystems"
             self.logger.exception(errmsg)
             errmsg = f"{errmsg}:\n{ex}"
             resp = self.parse_json_exeption(ex)
             status = errno.EINVAL
             if resp:
                 status = resp["code"]
-                errmsg = f"Failure listing connections, can't get subsystems: {resp['message']}"
+                errmsg = f"Failure listing connections for {subsystem}, " \
+                         f"can't get subsystems: {resp['message']}"
             return pb2.connections_info(status=status, error_message=errmsg, connections=[])
 
         connections = []
         host_nqns = []
         for s in subsys_ret:
             try:
-                if s["nqn"] != request.subsystem:
-                    self.logger.warning(f'Got subsystem {s["nqn"]} instead of '
-                                        f'{request.subsystem}, ignore')
+                if s["nqn"] != subsystem:
+                    self.logger.warning(f'Got subsystem {s["nqn"]} instead of {subsystem}, ignore')
                     continue
                 try:
                     subsys_hosts = s["hosts"]
@@ -4140,24 +4679,31 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     self.logger.debug(f"Can't find active qpair for connection {conn}")
                     continue
 
-                psk = self.host_info.is_psk_host(request.subsystem, hostnqn)
-                dhchap = self.host_info.is_dhchap_host(request.subsystem, hostnqn)
+                psk = self.host_info.is_psk_host(subsystem, hostnqn)
+                dhchap = self.host_info.is_dhchap_host(subsystem, hostnqn)
 
-                if request.subsystem in self.subsystem_listeners:
-                    lstnr = (adrfam, traddr, trsvcid, True)
-                    if lstnr in self.subsystem_listeners[request.subsystem]:
-                        secure = True
+                if subsystem in self.subsystem_listeners:
+                    for active in [False, True]:
+                        lstnr = (adrfam, traddr, trsvcid, True, active)
+                        if lstnr in self.subsystem_listeners[subsystem]:
+                            secure = True
+                            break
 
                 if not trtype:
                     trtype = "TCP"
                 if not adrfam:
                     adrfam = "ipv4"
+                was_ka_timeout = \
+                    self.host_info.was_host_disconnected_due_to_keepalive_timeout(
+                        subsystem, hostnqn)
                 one_conn = pb2.connection(nqn=hostnqn, connected=True,
                                           traddr=traddr, trsvcid=trsvcid,
                                           trtype=trtype, adrfam=adrfam,
                                           qpairs_count=conn["num_io_qpairs"],
                                           controller_id=conn["cntlid"],
-                                          secure=secure, use_psk=psk, use_dhchap=dhchap)
+                                          secure=secure, use_psk=psk, use_dhchap=dhchap,
+                                          subsystem=subsystem,
+                                          disconnected_due_to_keepalive_timeout=was_ka_timeout)
                 connections.append(one_conn)
                 if hostnqn in host_nqns:
                     host_nqns.remove(hostnqn)
@@ -4168,15 +4714,19 @@ class GatewayService(pb2_grpc.GatewayServicer):
         for nqn in host_nqns:
             psk = False
             dhchap = False
-            psk = self.host_info.is_psk_host(request.subsystem, nqn)
-            dhchap = self.host_info.is_dhchap_host(request.subsystem, nqn)
+            psk = self.host_info.is_psk_host(subsystem, nqn)
+            dhchap = self.host_info.is_dhchap_host(subsystem, nqn)
+            was_ka_timeout = \
+                self.host_info.was_host_disconnected_due_to_keepalive_timeout(
+                    subsystem, nqn)
             one_conn = pb2.connection(nqn=nqn, connected=False, traddr="<n/a>", trsvcid=0,
                                       qpairs_count=-1, controller_id=-1,
-                                      use_psk=psk, use_dhchap=dhchap)
+                                      use_psk=psk, use_dhchap=dhchap, subsystem=subsystem,
+                                      disconnected_due_to_keepalive_timeout=was_ka_timeout)
             connections.append(one_conn)
 
         return pb2.connections_info(status=0, error_message=os.strerror(0),
-                                    subsystem_nqn=request.subsystem, connections=connections)
+                                    subsystem_nqn=subsystem, connections=connections)
 
     def list_connections(self, request, context=None):
         return self.execute_grpc_function(self.list_connections_safe, request, context)
@@ -4184,6 +4734,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def create_listener_safe(self, request, context):
         """Creates a listener for a subsystem at a given IP/Port."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling create_listener_safe()"
         ret = True
         create_listener_error_prefix = f"Failure adding {request.nqn} listener at " \
                                        f"{request.traddr}:{request.trsvcid}"
@@ -4208,11 +4759,22 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
         traddr = GatewayUtils.unescape_address(request.traddr)
 
+        if not request.nqn:
+            errmsg = f"{create_listener_error_prefix}: missing subsystem NQN"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
         if GatewayUtils.is_discovery_nqn(request.nqn):
             errmsg = f"{create_listener_error_prefix}: Can't create a " \
                      f"listener for a discovery subsystem"
             self.logger.error(errmsg)
             return pb2.req_status(status=errno.EINVAL, error_message=errmsg)
+
+        # If this is not set the subsystem was not created yet
+        if request.nqn not in self.subsys_serial:
+            errmsg = f"{create_listener_error_prefix}: can't find subsystem {request.nqn}"
+            self.logger.error(errmsg)
+            return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
         if not GatewayState.is_key_element_valid(request.host_name):
             errmsg = f"{create_listener_error_prefix}: Host name " \
@@ -4255,15 +4817,16 @@ class GatewayService(pb2_grpc.GatewayServicer):
             if request.host_name == self.host_name:
                 try:
                     for secure in [False, True]:
-                        lstnr = (adrfam, traddr, request.trsvcid, secure)
-                        if lstnr in self.subsystem_listeners[request.nqn]:
-                            errmsg = f"{create_listener_error_prefix}: Subsystem already " \
-                                     f"listens on address {request.traddr}:{request.trsvcid}"
-                            self.logger.error(errmsg)
-                            return pb2.req_status(status=errno.EEXIST, error_message=errmsg)
+                        for active in [False, True]:
+                            lstnr = (adrfam, traddr, request.trsvcid, secure, active)
+                            if lstnr in self.subsystem_listeners[request.nqn]:
+                                errmsg = f"{create_listener_error_prefix}: Subsystem already " \
+                                         f"listens on address {request.traddr}:{request.trsvcid}"
+                                self.logger.error(errmsg)
+                                return pb2.req_status(status=errno.EEXIST, error_message=errmsg)
 
                     if self.verify_listener_ip:
-                        nics = NICS(True)
+                        nics = NICS(self.logger, True)
                         if not nics.verify_ip_address(traddr, adrfam):
                             for dev in nics.adapters.values():
                                 self.logger.debug(f"NIC: {dev}")
@@ -4276,9 +4839,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                     ret = rpc_nvmf.nvmf_subsystem_add_listener(self.spdk_rpc_client,
                                                                **add_listener_args)
                     self.logger.debug(f"create_listener: {ret}")
-                    self.subsystem_listeners[request.nqn].add((adrfam, traddr,
-                                                               request.trsvcid, request.secure))
-                    listener_created = True
+                    listener_created = ret
                 except Exception as ex:
                     self.logger.exception(create_listener_error_prefix)
                     errmsg = f"{create_listener_error_prefix}:\n{ex}"
@@ -4300,6 +4861,9 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 return pb2.req_status(status=errno.EINVAL,
                                       error_message=create_listener_error_prefix)
 
+            self.subsystem_listeners[request.nqn].add((adrfam, traddr,
+                                                       request.trsvcid, request.secure,
+                                                       request.host_name == self.host_name))
             if listener_created:
                 try:
                     self.logger.debug(f"create_listener nvmf_subsystem_listener_set_ana_state "
@@ -4435,6 +4999,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def delete_listener_safe(self, request, context):
         """Deletes a listener from a subsystem at a given IP/Port."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling delete_listener_safe()"
         ret = True
         esc_traddr = GatewayUtils.escape_address_if_ipv6(request.traddr)
         delete_listener_error_prefix = f"Failed to delete listener {esc_traddr}:" \
@@ -4487,7 +5052,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 errmsg = f"{delete_listener_error_prefix}: There are active connections for " \
                          f"{esc_traddr}:{request.trsvcid}. Deleting the listener terminates " \
                          f"active connections. You can continue to delete the listener by " \
-                         f"adding the `--force` parameter."
+                         f"adding the \"--force\" parameter."
                 self.logger.error(errmsg)
                 return pb2.req_status(status=errno.ENOTEMPTY, error_message=errmsg)
 
@@ -4495,40 +5060,43 @@ class GatewayService(pb2_grpc.GatewayServicer):
         with omap_lock:
             try:
                 is_there = False
+                is_active = False
                 if request.nqn in self.subsystem_listeners:
                     for secur in [False, True]:
-                        lstnr = (adrfam, traddr, request.trsvcid, secur)
-                        if lstnr in self.subsystem_listeners[request.nqn]:
-                            is_there = True
+                        if is_there:
                             break
+                        for active in [False, True]:
+                            lstnr = (adrfam, traddr, request.trsvcid, secur, active)
+                            if lstnr in self.subsystem_listeners[request.nqn]:
+                                is_there = True
+                                is_active = active
+                                break
                 if not is_there:
                     errmsg = f"{delete_listener_error_prefix}: Listener not found"
                     self.logger.error(errmsg)
                     return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
 
                 if request.host_name == self.host_name or request.force:
-                    ret = rpc_nvmf.nvmf_subsystem_remove_listener(
-                        self.spdk_rpc_client,
-                        nqn=request.nqn,
-                        trtype="TCP",
-                        traddr=traddr,
-                        trsvcid=str(request.trsvcid),
-                        adrfam=adrfam,
-                    )
-                    self.logger.debug(f"delete_listener: {ret}")
+                    if is_active:
+                        ret = rpc_nvmf.nvmf_subsystem_remove_listener(
+                            self.spdk_rpc_client,
+                            nqn=request.nqn,
+                            trtype="TCP",
+                            traddr=traddr,
+                            trsvcid=str(request.trsvcid),
+                            adrfam=adrfam,
+                        )
+                        self.logger.debug(f"delete_listener: {ret}")
                     if request.nqn in self.subsystem_listeners:
-                        if (adrfam, traddr, request.trsvcid,
-                                False) in self.subsystem_listeners[request.nqn]:
-                            self.subsystem_listeners[request.nqn].remove((adrfam, traddr,
-                                                                          request.trsvcid, False))
-                        if (adrfam, traddr, request.trsvcid,
-                                True) in self.subsystem_listeners[request.nqn]:
-                            self.subsystem_listeners[request.nqn].remove((adrfam, traddr,
-                                                                          request.trsvcid, True))
+                        for secur in [False, True]:
+                            for active in [False, True]:
+                                lstnr = (adrfam, traddr, request.trsvcid, secur, active)
+                                if lstnr in self.subsystem_listeners[request.nqn]:
+                                    self.subsystem_listeners[request.nqn].remove(lstnr)
                 else:
                     errmsg = f"{delete_listener_error_prefix}: Gateway's host name must " \
                              f"match current host ({self.host_name}). You can continue to " \
-                             f"delete the listener by adding the `--force` parameter."
+                             f"delete the listener by adding the \"--force\" parameter."
                     self.logger.error(errmsg)
                     return pb2.req_status(status=errno.ENOENT, error_message=errmsg)
             except Exception as ex:
@@ -4568,6 +5136,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
         self.logger.info(f"Received request to list listeners for {request.subsystem}, "
                          f"context: {context}{peer_msg}")
 
+        # If this is not set the subsystem was not created yet
+        if request.subsystem not in self.subsys_serial:
+            errmsg = f"Failure listing listeners: No such subsystem \"{request.subsystem}\""
+            self.logger.error(errmsg)
+            return pb2.listeners_info(status=errno.ENOENT, error_message=errmsg, listeners=[])
+
         listeners = []
         omap_lock = self.omap_lock.get_omap_lock_to_use(context)
         with omap_lock:
@@ -4605,6 +5179,8 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def show_gateway_listeners_info_safe(self, request, context):
         """Show gateway's listeners info."""
 
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling show_gateway_listeners_info_safe()"
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to show gateway listeners info for "
                          f"{request.subsystem_nqn}, context: {context}{peer_msg}")
@@ -4638,12 +5214,15 @@ class GatewayService(pb2_grpc.GatewayServicer):
             try:
                 secure = False
                 if request.subsystem_nqn in self.subsystem_listeners:
-                    local_lstnr = (lstnr["address"]["adrfam"].lower(),
-                                   lstnr["address"]["traddr"],
-                                   int(lstnr["address"]["trsvcid"]),
-                                   True)
-                    if local_lstnr in self.subsystem_listeners[request.subsystem_nqn]:
-                        secure = True
+                    for active in [False, True]:
+                        local_lstnr = (lstnr["address"]["adrfam"].lower(),
+                                       lstnr["address"]["traddr"],
+                                       int(lstnr["address"]["trsvcid"]),
+                                       True,
+                                       active)
+                        if local_lstnr in self.subsystem_listeners[request.subsystem_nqn]:
+                            secure = True
+                            break
                 lstnr_part = pb2.listener_info(host_name=self.host_name,
                                                trtype=lstnr["address"]["trtype"].upper(),
                                                adrfam=lstnr["address"]["adrfam"].lower(),
@@ -4698,6 +5277,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def list_subsystems_safe(self, request, context):
         """List subsystems."""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling list_subsystems_safe()"
         peer_msg = self.get_peer_message(context)
         log_level = logging.INFO if context else logging.DEBUG
         if request.subsystem_nqn:
@@ -4808,11 +5388,13 @@ class GatewayService(pb2_grpc.GatewayServicer):
         return self.execute_grpc_function(self.list_subsystems_safe, request, context)
 
     def change_subsystem_key_safe(self, request, context):
-        """Change subsystem key."""
+        """Change subsystem key inband authentication key."""
         peer_msg = self.get_peer_message(context)
-        failure_prefix = f"Failure changing DH-HMAC-CHAP key for subsystem {request.subsystem_nqn}"
+        cmd = "change" if request.dhchap_key else "delete"
+        cmd2 = "changing" if request.dhchap_key else "deleting"
+        failure_prefix = f"Failure {cmd2} DH-HMAC-CHAP key for subsystem {request.subsystem_nqn}"
         self.logger.info(
-            f"Received request to change inband authentication key for subsystem "
+            f"Received request to {cmd} inband authentication key for subsystem "
             f"{request.subsystem_nqn}, context: {context}{peer_msg}")
 
         if not GatewayState.is_key_element_valid(request.subsystem_nqn):
@@ -4934,12 +5516,16 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def get_spdk_nvmf_log_flags_and_level_safe(self, request, context):
         """Gets spdk nvmf log flags, log level and log print level"""
+
+        assert self.rpc_lock.locked(), \
+            "RPC is unlocked when calling get_spdk_nvmf_log_flags_and_level_safe()"
         peer_msg = self.get_peer_message(context)
-        self.logger.info(f"Received request to get SPDK nvmf log flags and level{peer_msg}")
+        self.logger.info(f"Received request to get SPDK log flags and level, "
+                         f"all_log_flags: {request.all_log_flags}{peer_msg}")
         log_flags = []
         try:
             nvmf_log_flags = {key: value for key, value in rpc_log.log_get_flags(
-                self.spdk_rpc_client).items() if key.startswith('nvmf')}
+                self.spdk_rpc_client).items() if request.all_log_flags or key.startswith('nvmf')}
             for flag, flagvalue in nvmf_log_flags.items():
                 pb2_log_flag = pb2.spdk_log_flag_info(name=flag, enabled=flagvalue)
                 log_flags.append(pb2_log_flag)
@@ -4977,6 +5563,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
         ret_log = False
         ret_print = False
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling set_spdk_nvmf_logs_safe()"
         peer_msg = self.get_peer_message(context)
         if request.HasField("log_level"):
             log_level = GatewayEnumUtils.get_key_from_value(pb2.LogLevel, request.log_level)
@@ -4992,15 +5579,16 @@ class GatewayService(pb2_grpc.GatewayServicer):
                 self.logger.error(errmsg)
                 return pb2.req_status(status=errno.ENOKEY, error_message=errmsg)
 
-        self.logger.info(f"Received request to set SPDK nvmf logs: log_level: {log_level}, "
-                         f"print_level: {print_level}{peer_msg}")
+        self.logger.info(f"Received request to set SPDK logs: log_level: {log_level}, "
+                         f"print_level: {print_level}, extra: {request.extra_log_flags}{peer_msg}")
 
         try:
             nvmf_log_flags = [key for key in rpc_log.log_get_flags(self.spdk_rpc_client).keys()
                               if key.startswith('nvmf')]
+            nvmf_log_flags += request.extra_log_flags
             ret = [rpc_log.log_set_flag(
                 self.spdk_rpc_client, flag=flag) for flag in nvmf_log_flags]
-            self.logger.debug(f"Set SPDK nvmf log flags {nvmf_log_flags} to TRUE: {ret}")
+            self.logger.debug(f"Set SPDK log flags {nvmf_log_flags} to TRUE: {ret}")
             if log_level is not None:
                 ret_log = rpc_log.log_set_level(self.spdk_rpc_client, level=log_level)
                 self.logger.debug(f"Set log level to {log_level}: {ret_log}")
@@ -5031,7 +5619,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
             errmsg = "Failure setting SPDK print log level"
         elif not all(ret):
             status = errno.EINVAL
-            errmsg = "Failure setting some SPDK nvmf log flags"
+            errmsg = "Failure setting some SPDK log flags"
         return pb2.req_status(status=status, error_message=errmsg)
 
     def set_spdk_nvmf_logs(self, request, context=None):
@@ -5039,33 +5627,38 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def disable_spdk_nvmf_logs_safe(self, request, context):
         """Disables spdk nvmf logs"""
+
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling disable_spdk_nvmf_logs_safe()"
         peer_msg = self.get_peer_message(context)
-        self.logger.info(f"Received request to disable SPDK nvmf logs{peer_msg}")
+        self.logger.info(f"Received request to disable SPDK logs, "
+                         f"extra: {request.extra_log_flags}{peer_msg}")
 
         try:
             nvmf_log_flags = [key for key in rpc_log.log_get_flags(self.spdk_rpc_client).keys()
                               if key.startswith('nvmf')]
+            nvmf_log_flags += request.extra_log_flags
             ret = [rpc_log.log_clear_flag(self.spdk_rpc_client, flag=flag)
                    for flag in nvmf_log_flags]
+            self.logger.debug(f"Set SPDK log flags {nvmf_log_flags} to FALSE: {ret}")
             logs_level = [rpc_log.log_set_level(self.spdk_rpc_client, level='NOTICE'),
                           rpc_log.log_set_print_level(self.spdk_rpc_client, level='INFO')]
             ret.extend(logs_level)
         except Exception as ex:
-            errmsg = "Failure in disable SPDK nvmf log flags"
+            errmsg = "Failure in disable SPDK log flags"
             self.logger.exception(errmsg)
             errmsg = f"{errmsg}:\n{ex}"
             resp = self.parse_json_exeption(ex)
             status = errno.EINVAL
             if resp:
                 status = resp["code"]
-                errmsg = f"Failure in disable SPDK nvmf log flags: {resp['message']}"
+                errmsg = f"Failure in disable SPDK log flags: {resp['message']}"
             return pb2.req_status(status=status, error_message=errmsg)
 
         status = 0
         errmsg = os.strerror(0)
         if not all(ret):
             status = errno.EINVAL
-            errmsg = "Failure in disable SPDK nvmf log flags"
+            errmsg = "Failure in disable SPDK log flags"
         return pb2.req_status(status=status, error_message=errmsg)
 
     def disable_spdk_nvmf_logs(self, request, context=None):
@@ -5089,6 +5682,7 @@ class GatewayService(pb2_grpc.GatewayServicer):
     def get_gateway_info_safe(self, request, context):
         """Get gateway's info"""
 
+        assert self.rpc_lock.locked(), "RPC is unlocked when calling get_gateway_info_safe()"
         peer_msg = self.get_peer_message(context)
         self.logger.info(f"Received request to get gateway's info{peer_msg}")
         gw_version_string = os.getenv("NVMEOF_VERSION")
@@ -5153,10 +5747,12 @@ class GatewayService(pb2_grpc.GatewayServicer):
 
     def get_gateway_info(self, request, context=None):
         """Get gateway's info"""
+
         return self.execute_grpc_function(self.get_gateway_info_safe, request, context)
 
     def get_gateway_log_level(self, request, context=None):
         """Get gateway's log level"""
+
         peer_msg = self.get_peer_message(context)
         try:
             log_level = GatewayEnumUtils.get_key_from_value(pb2.GwLogLevel, self.logger.level)

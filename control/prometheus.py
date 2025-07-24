@@ -124,6 +124,7 @@ class NVMeOFCollector:
         self.subsystems = []
         self.subsystems_cli = {}
         self.connections = {}
+        self.hosts = {}
         self.listeners = {}
         self.method_timings = {}
 
@@ -207,14 +208,36 @@ class NVMeOFCollector:
             connection_map[subsys.nqn] = resp
         return connection_map
 
+    @timer
+    def _get_host_map(self, subsystem_list):
+        """Fetch host information for all defined subsystems"""
+        host_map = {}
+        for subsys in subsystem_list:
+            resp = self.gateway_rpc.list_hosts(pb2.list_hosts_req(subsystem=subsys.nqn,
+                                                                  clear_alerts=True))
+            if resp.status != 0:
+                logger.error(f"Exporter failed to fetch host info for "
+                             f"{subsys.nqn}: {resp.error_message}")
+                continue
+            host_map[subsys.nqn] = resp
+        return host_map
+
     def _get_data(self):
         """Gather data from the SPDK"""
         self.bdev_info = self._get_bdev_info()
+        logger.debug("Done with _get_bdev_info()")
         self.bdev_io_stats = self._get_bdev_io_stats()
+        logger.debug("Done with _get_bdev_io_stats()")
         self.spdk_thread_stats = self._get_spdk_thread_stats()
+        logger.debug("Done with _get_spdk_thread_stats()")
         self.subsystems = self._get_subsystems()
+        logger.debug("Done with _get_subsystems()")
         self.subsystems_cli = self._list_subsystems()
+        logger.debug("Done with _list_subsystems()")
         self.connections = self._get_connection_map(self.subsystems)
+        logger.debug("Done with _get_connection_map()")
+        self.hosts = self._get_host_map(self.subsystems)
+        logger.debug("Done with _get_host_map()")
 
     @ttl
     def collect(self):
@@ -230,10 +253,11 @@ class NVMeOFCollector:
 
         elapsed = sum(self.method_timings.values())
         if elapsed > self.interval:
-            logger.error(f"Stats refresh time > interval time of {self.interval} secs")
+            logger.error(f"Stats refresh time {elapsed:.3f} > interval time of "
+                         f"{self.interval} secs")
         elif elapsed > self.interval * COLLECTION_ELAPSED_WARNING:
             logger.warning(f"Stats refresh of {elapsed:.2f}s is close to exceeding "
-                           f"the interval {self.interval}s")
+                           f"the interval {self.interval} secs")
         else:
             logger.debug(f"Stats refresh completed in {elapsed:.3f} secs.")
 
@@ -386,6 +410,10 @@ class NVMeOFCollector:
             f"{self.metric_prefix}_host_connection_state",
             "Host connection state 0=disconnected, 1=connected",
             labels=["gw_name", "nqn", "host_nqn", "host_addr"])
+        host_keep_alive_timeout = GaugeMetricFamily(
+            f"{self.metric_prefix}_host_keepalive_timeout",
+            "Host keepalive timeout 0=no, 1=yes",
+            labels=["gw_name", "nqn", "host_nqn"])
 
         listener_map = {}
 
@@ -431,6 +459,18 @@ class NVMeOFCollector:
                     f"{conn.traddr}:{conn.trsvcid}" if conn.connected else "<n/a>"
                 ], 1 if conn.connected else 0)
 
+            try:
+                host_info = self.hosts[nqn]
+            except KeyError:
+                logger.debug(f"couldn't find {nqn} in host list, skipping")
+                continue
+            for host in host_info.hosts:
+                host_keep_alive_timeout.add_metric([
+                    self.gw_metadata.name,
+                    nqn,
+                    host.nqn
+                ], 1 if host.disconnected_due_to_keepalive_timeout else 0)
+
         yield subsystem_metadata
         yield subsystem_listeners
         yield subsystem_host_count
@@ -438,6 +478,7 @@ class NVMeOFCollector:
         yield subsystem_namespace_limit
         yield subsystem_namespace_metadata
         yield host_connection_state
+        yield host_keep_alive_timeout
 
         subsystem_listener_iface_info = GaugeMetricFamily(
             f"{self.metric_prefix}_subsystem_listener_iface_info",
