@@ -7,12 +7,17 @@
 #  Authors: anita.shekar@ibm.com, sandy.kaur@ibm.com
 #
 
+import logging
 import argparse
 from .server import GatewayServer
 from .config import GatewayConfig
-from .utils import GatewayLogger
 
 if __name__ == '__main__':
+    # Set up root logger
+    logging.basicConfig()
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+
     parser = argparse.ArgumentParser(prog="python3 -m control",
                                      description="Manage NVMe gateways",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -24,10 +29,8 @@ if __name__ == '__main__':
         help="Path to config file",
     )
     args = parser.parse_args()
+
     config = GatewayConfig(args.config)
-    gw_logger = GatewayLogger(config)
-    config.display_environment_info(gw_logger.logger)
-    config.dump_config_file(gw_logger.logger)
     with GatewayServer(config) as gateway:
         gateway.serve()
         gateway.keep_alive()
