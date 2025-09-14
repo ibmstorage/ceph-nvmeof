@@ -23,7 +23,7 @@ import spdk.rpc
 import spdk.rpc.client as rpc_client
 import spdk.rpc.nvmf as rpc_nvmf
 import spdk.rpc.iobuf as rpc_iobuf
-import spdk.rpc.dsa as rpc_dsa
+import spdk.rpc.sock as rpc_sock
 
 from .proto import gateway_pb2 as pb2
 from .proto import gateway_pb2_grpc as pb2_grpc
@@ -572,6 +572,7 @@ class GatewayServer:
         max_subsystems = self.config.getint_with_default("gateway",
                                                          "max_subsystems",
                                                          GatewayService.MAX_SUBSYSTEMS_DEFAULT)
+
         # Add extra args from the conf file
         if spdk_tgt_cmd_extra_args:
             cmd += shlex.split(spdk_tgt_cmd_extra_args)
@@ -650,8 +651,11 @@ class GatewayServer:
             if iobuf_options:
                 self._initialize_iobuf_options(iobuf_options)
 
-            # Set config and enable dsa accel module offload.
-            self._probe_dsa()
+            # Set SSL tickets for ssl sock implemtation
+            self._set_num_ssl_tickets(0)
+
+            # Notice that some SPDK calls can't be made after framework init
+            self._initialize_framework()
 
             self.spdk_rpc_ping_client = rpc_client.JSONRPCClient(
                 self.spdk_rpc_socket_path,
@@ -829,13 +833,19 @@ class GatewayServer:
             self.logger.exception("IObuf set options returned with error")
             pass
 
-    def _accel_config(self):
-        # Instantiate DsaUtils and run config
-        if self.config.getboolean_with_default("spdk", "enable_dsa_acceleration", True):
-            dsa_utils = DsaUtils(self.logger)
-            dsa_utils.config()
-        else:
-            self.logger.info("DSA acceleration device configuration is disabled")
+    def _set_num_ssl_tickets(self, tickets_number=0):
+        """Set SSL tickets number for ssl socket implementation."""
+
+        try:
+            rpc_sock.sock_impl_set_options(self.spdk_rpc_client,
+                                           impl_name="ssl",
+                                           num_ssl_tickets=tickets_number)
+        except Exception:
+            self.logger.exception("sock_impl_set_options returned with error")
+            pass
+
+    def _initialize_framework(self):
+        """In case we started SPDK with the "wait for rpc" flag, we need to call this"""
 
     def _probe_dsa(self):
         """Initializes dsa accel module offload."""
