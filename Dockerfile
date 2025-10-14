@@ -133,7 +133,7 @@ RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
     dnf install -y python3-pip && \
-    dnf install -y gcc python3-devel
+    dnf install -y gcc gcc-c++ python3-devel
 RUN \
     --mount=type=cache,target=/root/.cache/pip \
     pip install -U pip setuptools wheel
