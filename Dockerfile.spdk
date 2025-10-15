@@ -10,7 +10,7 @@ ARG DNF_OPTS="\
   "
 ARG ACCEL_CONFIG_SRC="/accel-config"
 
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9:latest AS build
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10:latest AS build
 
 ARG SPDK_CEPH_VERSION \
     CEPH_CLUSTER_CEPH_REPO_BASEURL \
@@ -53,10 +53,10 @@ EOF
 
 RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id)
 
-RUN subscription-manager repos --enable rhel-9-for-x86_64-baseos-rpms
-RUN subscription-manager repos --enable rhel-9-for-x86_64-appstream-rpms
-RUN subscription-manager repos --enable rhel-9-for-x86_64-highavailability-rpms
-RUN subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
+RUN subscription-manager repos --enable rhel-10-for-x86_64-baseos-rpms
+RUN subscription-manager repos --enable rhel-10-for-x86_64-appstream-rpms
+RUN subscription-manager repos --enable rhel-10-for-x86_64-highavailability-rpms
+RUN subscription-manager repos --enable codeready-builder-for-rhel-10-x86_64-rpms
 
 COPY spdk/ /src/
 COPY spdk/scripts/ /src/scripts/
@@ -71,10 +71,10 @@ RUN \
     rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org \
     && rpm --import https://www.elrepo.org/RPM-GPG-KEY-v2-elrepo.org \
     && dnf install -y $DNF_OPTS dnf-plugins-core \
-    && dnf install -y https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm \
+    && dnf install -y https://www.elrepo.org/elrepo-release-10.el9.elrepo.noarch.rpm \
     && dnf install -y $DNF_OPTS \
-       https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
-       https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-9.noarch.rpm \
+       https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm \
+       https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-10.noarch.rpm \
     && chmod +x scripts/pkgdep.sh \
     && scripts/pkgdep.sh $SPDK_PKGDEP_ARGS \
     && dnf update -y $DNF_OPTS
@@ -118,20 +118,22 @@ RUN make -C ./examples/bdev/bdevperf
 #     && ls -l /root/rpmbuild/rpm
 
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS rpm-export
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS rpm-export
 COPY --from=build /root/rpmbuild/rpm /rpm
 COPY --from=build /root/rpmbuild/RPMS/x86_64 /rpm
 
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 as spdk
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 as spdk
 
 ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
     DNF_OPTS
 
-# ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/"
-# # This would become obsolete as the release rolls out new packages
-# ARG SPDK_CENTOS_REPO_VER="9.0-28.el9"
+RUN subscription-manager repos --enable rhel-10-for-x86_64-baseos-rpms
+RUN subscription-manager repos --enable rhel-10-for-x86_64-appstream-rpms
+RUN subscription-manager repos --enable rhel-10-for-x86_64-highavailability-rpms
+RUN subscription-manager repos --enable codeready-builder-for-rhel-10-x86_64-rpms
+"
 
 ARG SPDK_PKGDEP_ARGS \
     SPDK_CONFIGURE_ARGS \
@@ -182,8 +184,8 @@ COPY --from=build /root/rpmbuild/rpm /rpm
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
-    rpm -vih https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
-    && rpm -vih https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-9.noarch.rpm \
+    rpm -vih https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm \
+    && rpm -vih https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-10.noarch.rpm \
     && dnf $DNF_OPTS install -y /rpm/$(uname -m)/*.rpm \
     && dnf $DNF_OPTS update -y
 
