@@ -133,7 +133,6 @@ RUN subscription-manager repos --enable rhel-10-for-x86_64-baseos-rpms
 RUN subscription-manager repos --enable rhel-10-for-x86_64-appstream-rpms
 RUN subscription-manager repos --enable rhel-10-for-x86_64-highavailability-rpms
 RUN subscription-manager repos --enable codeready-builder-for-rhel-10-x86_64-rpms
-"
 
 ARG SPDK_PKGDEP_ARGS \
     SPDK_CONFIGURE_ARGS \
