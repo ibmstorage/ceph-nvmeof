@@ -117,10 +117,12 @@ RUN make -C ./examples/bdev/bdevperf
 
 RUN subscription-manager unregister
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:a2fde47af09006ae2b784881130fb866d92a2037c45059a5c9e014ae6c4ec9c5 AS rpm-export
-COPY --from=build /root/rpmbuild/rpm /rpm
-COPY --from=build /root/rpmbuild/RPMS/x86_64 /rpm
 
+ARG TARGETARCH
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:a2fde47af09006ae2b784881130fb866d92a2037c45059a5c9e014ae6c4ec9c5 AS rpm-export
+
+COPY --from=build /root/rpmbuild/rpm /rpm
+COPY --from=build /root/rpmbuild/RPMS/${TARGETARCH} /rpm
 #------------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:a2fde47af09006ae2b784881130fb866d92a2037c45059a5c9e014ae6c4ec9c5 as spdk
 
