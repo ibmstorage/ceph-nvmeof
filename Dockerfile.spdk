@@ -115,6 +115,7 @@ RUN make -C ./examples/bdev/bdevperf
 #     && find /root/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /root/rpmbuild/rpm/ \; \
 #     && ls -l /root/rpmbuild/rpm
 
+RUN subscription-manager unregister
 #------------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:a2fde47af09006ae2b784881130fb866d92a2037c45059a5c9e014ae6c4ec9c5 AS rpm-export
 COPY --from=build /root/rpmbuild/rpm /rpm
@@ -190,6 +191,7 @@ RUN \
 ENTRYPOINT [ "/usr/local/bin/nvmf_tgt" ]
 CMD [ "-u", "-r", "/var/tmp/spdk.sock" ]
 
+RUN subscription-manager unregister
 #------------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM spdk AS bdevperf
 
