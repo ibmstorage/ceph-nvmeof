@@ -73,7 +73,6 @@ RUN \
     && dnf install -y https://www.elrepo.org/elrepo-release-10.el10.elrepo.noarch.rpm \
     && dnf install -y $DNF_OPTS \
        https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm \
-       https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-10.noarch.rpm \
     && chmod +x scripts/pkgdep.sh \
     && scripts/pkgdep.sh $SPDK_PKGDEP_ARGS \
     && dnf update -y $DNF_OPTS
