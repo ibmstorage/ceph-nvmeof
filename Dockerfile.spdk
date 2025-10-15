@@ -116,12 +116,12 @@ RUN make -C ./examples/bdev/bdevperf
 #     && ls -l /root/rpmbuild/rpm
 
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS rpm-export
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:a2fde47af09006ae2b784881130fb866d92a2037c45059a5c9e014ae6c4ec9c5 AS rpm-export
 COPY --from=build /root/rpmbuild/rpm /rpm
 COPY --from=build /root/rpmbuild/RPMS/x86_64 /rpm
 
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 as spdk
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/ubi@sha256:a2fde47af09006ae2b784881130fb866d92a2037c45059a5c9e014ae6c4ec9c5 as spdk
 
 ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
