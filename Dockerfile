@@ -6,7 +6,7 @@ ARG SPDK_IMAGE \
 
 #------------------------------------------------------------------------------
 # Base image for NVMEOF_TARGET=cli (nvmeof-cli)
-FROM registry.access.redhat.com/ubi10/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS base-cli
+FROM registry.access.redhat.com/ubi10/ubi@sha256:a2fde47af09006ae2b784881130fb866d92a2037c45059a5c9e014ae6c4ec9c5 AS base-cli
 ENV GRPC_DNS_RESOLVER=native
 ENTRYPOINT ["python3", "-m", "control.cli"]
 CMD []
