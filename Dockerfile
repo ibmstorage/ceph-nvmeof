@@ -155,4 +155,4 @@ RUN pdm run protoc
 
 #------------------------------------------------------------------------------
 FROM python-intermediate
-COPY --from=builder $APPDIR .
+COPY --from=builder /src/src /src
