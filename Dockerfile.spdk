@@ -179,9 +179,18 @@ COPY --from=build /etc/yum.conf /etc/yum.conf
 
 COPY --from=build /root/rpmbuild/rpm /rpm
 
-RUN \
-    --mount=type=cache,target=/var/cache/dnf \
-    --mount=type=cache,target=/var/lib/dnf \
+RUN --mount=type=secret,id=activation-key \
+    --mount=type=secret,id=org-id \
+    subscription-manager register \
+        --activationkey=$(cat /run/secrets/activation-key) \
+        --org=$(cat /run/secrets/org-id) && \
+    ARCH=$(uname -m) && \
+    echo "=== Detected architecture: $ARCH ===" && \
+    subscription-manager repos --list | grep rhel-10 || true && \
+    subscription-manager repos \
+        --enable=rhel-9-for-$ARCH-baseos-rpms \
+        --enable=rhel-9-for-$ARCH-appstream-rpms \
+        --enable=codeready-builder-for-rhel-9-$ARCH-rpms && \
     rpm -vih https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
     && rpm -vih https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-9.noarch.rpm \
     && dnf $DNF_OPTS install -y /rpm/$(uname -m)/*.rpm \
