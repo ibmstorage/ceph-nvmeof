@@ -156,3 +156,8 @@ RUN pdm run protoc
 #------------------------------------------------------------------------------
 FROM python-intermediate
 COPY --from=builder /src/src /src
+
+ENV PYTHONPATH=/src/src:$PYTHONPATH
+
+ENTRYPOINT ["python3", "-m", "control.cli"]
+CMD []
