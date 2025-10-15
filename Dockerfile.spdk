@@ -127,6 +127,8 @@ ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
     DNF_OPTS
 
+RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id)
+
 RUN subscription-manager repos --enable rhel-10-for-x86_64-baseos-rpms
 RUN subscription-manager repos --enable rhel-10-for-x86_64-appstream-rpms
 RUN subscription-manager repos --enable rhel-10-for-x86_64-highavailability-rpms
