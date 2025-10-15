@@ -129,9 +129,9 @@ ARG SPDK_CEPH_VERSION \
     DNF_OPTS
 
 # RHEL repos
-ARG RHEL_BASE_REPO="rhel-10-for-x86_64-baseos-rpms"
-ARG RHEL_APPSTREAM_REPO="rhel-10-for-x86_64-appstream-rpms"
-ARG RHEL_CODEREADY_REPO="codeready-builder-for-rhel-10-x86_64-rpms"
+ARG RHEL_BASE_REPO="rhel-10-for-$(arch)-baseos-rpms"
+ARG RHEL_APPSTREAM_REPO="rhel-10-for-$(arch)-appstream-rpms"
+ARG RHEL_CODEREADY_REPO="codeready-builder-for-rhel-10-$(arch)-rpms"
 
 ARG SPDK_PKGDEP_ARGS \
     SPDK_CONFIGURE_ARGS \
