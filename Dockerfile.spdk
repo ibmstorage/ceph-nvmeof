@@ -70,7 +70,7 @@ RUN \
     --mount=type=cache,target=/root/.cache/pip \
     rpm --import https://www.elrepo.org/RPM-GPG-KEY-v2-elrepo.org \
     && dnf install -y $DNF_OPTS dnf-plugins-core \
-    && dnf install -y https://www.elrepo.org/elrepo-release-10.el9.elrepo.noarch.rpm \
+    && dnf install -y https://www.elrepo.org/elrepo-release-10.el10.elrepo.noarch.rpm \
     && dnf install -y $DNF_OPTS \
        https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm \
        https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-10.noarch.rpm \
