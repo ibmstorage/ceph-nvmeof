@@ -155,7 +155,7 @@ RUN pdm run protoc
 
 #------------------------------------------------------------------------------
 FROM python-intermediate
-COPY --from=builder /src/src /src
+COPY --from=builder /src /src
 
 ENV PYTHONPATH=/src/src:$PYTHONPATH
 
