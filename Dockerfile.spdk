@@ -128,10 +128,10 @@ ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
     DNF_OPTS
 
-# RHEL repos
-ARG RHEL_BASE_REPO="rhel-10-for-$(arch)-baseos-rpms"
-ARG RHEL_APPSTREAM_REPO="rhel-10-for-$(arch)-appstream-rpms"
-ARG RHEL_CODEREADY_REPO="codeready-builder-for-rhel-10-$(arch)-rpms"
+# # RHEL repos
+# ARG RHEL_BASE_REPO="rhel-10-for-$(arch)-baseos-rpms"
+# ARG RHEL_APPSTREAM_REPO="rhel-10-for-$(arch)-appstream-rpms"
+# ARG RHEL_CODEREADY_REPO="codeready-builder-for-rhel-10-$(arch)-rpms"
 
 ARG SPDK_PKGDEP_ARGS \
     SPDK_CONFIGURE_ARGS \
@@ -184,14 +184,15 @@ RUN --mount=type=secret,id=activation-key \
     subscription-manager register \
         --activationkey=$(cat /run/secrets/activation-key) \
         --org=$(cat /run/secrets/org-id) && \
-    echo "=== Checking all available repos ===" && \
+    ARCH=$(uname -m) && \
+    echo "=== Detected architecture: $ARCH ===" && \
     subscription-manager repos --list | grep rhel-10 || true && \
     subscription-manager repos \
-        --enable=${RHEL_BASE_REPO} \
-        --enable=${RHEL_APPSTREAM_REPO} \
-        --enable=${RHEL_CODEREADY_REPO} && \
+        --enable=rhel-10-for-$ARCH-baseos-rpms \
+        --enable=rhel-10-for-$ARCH-appstream-rpms \
+        --enable=codeready-builder-for-rhel-10-$ARCH-rpms && \
     rpm -vih https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm && \
-    dnf $DNF_OPTS install -y /rpm/$(uname -m)/*.rpm && \
+    dnf $DNF_OPTS install -y /rpm/$ARCH/*.rpm && \
     dnf $DNF_OPTS update -y && \
     subscription-manager unregister
 
