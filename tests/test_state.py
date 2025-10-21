@@ -22,7 +22,7 @@ def local_state():
 @pytest.fixture
 def omap_state(config):
     """Sets up and tears down OMAP state object."""
-    omap = OmapGatewayState(config, "test")
+    omap = OmapGatewayState(config, None, "test")
     omap.delete_state()
     yield omap
     omap.delete_state()
@@ -49,7 +49,7 @@ def test_state_polling_update(config, ioctx, local_state, omap_state):
 
     update_counter = 0
 
-    def _state_polling_update(update, is_add_req):
+    def _state_polling_update(update, is_add_req, break_interval):
         nonlocal update_counter
         update_counter += 1
         for k, v in update.items():
@@ -109,7 +109,7 @@ def test_state_notify_update(config, ioctx, local_state, omap_state):
     update_counter = 0
     notify_event = threading.Event()      # Event to signal when notify is called
 
-    def _state_notify_update(update, is_add_req):
+    def _state_notify_update(update, is_add_req, break_interval):
         nonlocal update_counter
         update_counter += 1
         elapsed = time.time() - start

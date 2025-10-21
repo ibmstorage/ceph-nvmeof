@@ -5,6 +5,7 @@ from control.cephutils import CephUtils
 import grpc
 from control.proto import gateway_pb2_grpc as pb2_grpc
 import copy
+import os
 
 image = "mytestdevimage"
 pool = "rbd"
@@ -31,7 +32,10 @@ def two_gateways(config):
     configA.config["gateway"]["name"] = nameA
     configA.config["gateway"]["override_hostname"] = nameA
     configA.config["spdk"]["rpc_socket_name"] = sockA
-    configA.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x03"
+    if os.cpu_count() >= 4:
+        configA.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x03"
+    else:
+        configA.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
     portA = configA.getint("gateway", "port")
     configB.config["gateway"]["name"] = nameB
     configB.config["gateway"]["override_hostname"] = nameB
@@ -40,7 +44,10 @@ def two_gateways(config):
     discPortB = configB.getint("discovery", "port") + 1
     configB.config["gateway"]["port"] = str(portB)
     configB.config["discovery"]["port"] = str(discPortB)
-    configB.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x0C"
+    if os.cpu_count() >= 4:
+        configB.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x0C"
+    else:
+        configB.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
 
     ceph_utils = CephUtils(config)
     with (GatewayServer(configA) as gatewayA, GatewayServer(configB) as gatewayB):

@@ -10,7 +10,7 @@
 import argparse
 import json
 from .config import GatewayConfig
-from .state import GatewayState, LocalGatewayState, OmapGatewayState, GatewayStateHandler
+from .state import GatewayState, LocalGatewayState, OmapLock, OmapGatewayState, GatewayStateHandler
 from .utils import GatewayLogger
 from .utils import GatewayUtilsCrypto
 
@@ -327,7 +327,11 @@ class DiscoveryService:
         self.version = 1
         self.config = config
         self.lock = threading.Lock()
-        self.omap_state = OmapGatewayState(self.config, f"discovery-{socket.gethostname()}")
+        self.abort_on_error = self.config.getboolean_with_default("discovery",
+                                                                  "abort_on_errors",
+                                                                  True)
+        self.omap_state = OmapGatewayState(self.config, None, f"discovery-{socket.gethostname()}")
+        self.omap_state.abort_on_error = self.abort_on_error
 
         self.gw_logger_object = GatewayLogger(config)
         self.logger = self.gw_logger_object.logger
@@ -344,6 +348,7 @@ class DiscoveryService:
             assert 0
         self.logger.info(f"discovery addr: {self.discovery_addr} port: {self.discovery_port}")
 
+        self.omap_lock = None
         self.sock = None
         self.conn_vals = {}
         self.connection_counter = 1
@@ -354,7 +359,7 @@ class DiscoveryService:
 
     def __exit__(self, exc_type, exc_value, traceback):
         if self.omap_state:
-            self.omap_state.cleanup_omap()
+            self.omap_state.cleanup_omap(self.omap_lock)
             self.omap_state = None
 
         if self.selector:
@@ -390,8 +395,14 @@ class DiscoveryService:
     def _read_all(self) -> Dict[str, str]:
         """Reads OMAP and returns dict of all keys and values."""
 
-        omap_dict = self.omap_state.get_state()
-        return omap_dict
+        try:
+            omap_dict = self.omap_state.get_state()
+            return omap_dict
+        except Exception:
+            self.logger.exception("Failure getting OMAP state for discovery")
+            if self.abort_on_error:
+                raise
+        return {}
 
     def _get_vals(self, omap_dict, prefix):
         """Read values from the OMAP dict."""
@@ -415,6 +426,9 @@ class DiscoveryService:
             conn.sendall(pdu_reply + icresp_reply + bytes(112))
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
+            return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
             return -1
         self.logger.debug("reply initialize connection request.")
         return 0
@@ -468,6 +482,9 @@ class DiscoveryService:
             conn.sendall(pdu_reply + connect_reply)
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
+            return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
             return -1
         self.logger.debug("reply connect request.")
         return 0
@@ -534,6 +551,9 @@ class DiscoveryService:
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
             return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
+            return -1
         self.logger.debug("reply property get request.")
         return 0
 
@@ -571,6 +591,9 @@ class DiscoveryService:
             conn.sendall(pdu_reply + property_set)
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
+            return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
             return -1
         self.logger.debug("reply property set request.")
         return 0
@@ -636,6 +659,9 @@ class DiscoveryService:
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
             return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
+            return -1
         self.logger.debug("reply identify request.")
         return 0
 
@@ -673,6 +699,9 @@ class DiscoveryService:
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
             return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
+            return -1
         self.logger.debug("reply set feature request.")
         return 0
 
@@ -708,6 +737,9 @@ class DiscoveryService:
             conn.sendall(pdu_reply + get_feature_reply)
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
+            return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
             return -1
         self.logger.debug("reply get feature request.")
         return 0
@@ -857,6 +889,9 @@ class DiscoveryService:
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
             return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
+            return -1
         self.logger.debug("reply get log page request.")
         return 0
 
@@ -890,6 +925,9 @@ class DiscoveryService:
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
             return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
+            return -1
         self.logger.debug("reply keep alive request.")
         return 0
 
@@ -917,6 +955,9 @@ class DiscoveryService:
         except BrokenPipeError:
             self.logger.error("client disconnected unexpectedly.")
             return -1
+        except OSError as ex:
+            self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
+            return -1
         self.logger.warning("reply not supported opcode.")
         return 0
 
@@ -938,7 +979,7 @@ class DiscoveryService:
         self_conn.recv_async = True
         self_conn.async_cmd_id = cmd_id
 
-    def _state_notify_update(self, update, is_add_req):
+    def _state_notify_update(self, update, is_add_req, break_interval):
         """Notify and reply async event."""
 
         should_send_async_event = False
@@ -970,6 +1011,9 @@ class DiscoveryService:
                     self.conn_vals[key].connection.sendall(pdu_reply + async_reply)
                 except BrokenPipeError:
                     self.logger.error("client disconnected unexpectedly.")
+                    return
+                except OSError as ex:
+                    self.logger.exception(f"got OS error {ex.errno}: {ex.strerror}")
                     return
                 self.logger.debug("notify and reply async request.")
                 self.conn_vals[key].recv_async = False
@@ -1029,8 +1073,8 @@ class DiscoveryService:
                     self_conn.recv_buffer += message
                 else:
                     return
-            except BlockingIOError:
-                self.logger.error("recived data failed.")
+            except OSError as ex:
+                self.logger.error(f"Recived data failed. {ex.errno}: {ex.strerror}")
 
             while True:
                 if len(self_conn.recv_buffer) < 8:
@@ -1158,6 +1202,7 @@ class DiscoveryService:
                                             self.omap_state,
                                             self._state_notify_update,
                                             dummy_crypto, f"discovery-{socket.gethostname()}")
+        self.omap_lock = OmapLock(gateway_state, None)
         gateway_state.start_update()
 
         try:

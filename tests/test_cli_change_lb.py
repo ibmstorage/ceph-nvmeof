@@ -8,6 +8,7 @@ import grpc
 from control.proto import gateway_pb2_grpc as pb2_grpc
 import copy
 import time
+import os
 
 image = "mytestdevimage"
 pool = "rbd"
@@ -36,7 +37,10 @@ def two_gateways(config):
     configA.config["gateway"]["name"] = nameA
     configA.config["gateway"]["override_hostname"] = nameA
     configA.config["spdk"]["rpc_socket_name"] = sockA
-    configA.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x03"
+    if os.cpu_count() >= 4:
+        configA.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x03"
+    else:
+        configA.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
     portA = configA.getint("gateway", "port")
     configB.config["gateway"]["name"] = nameB
     configB.config["gateway"]["override_hostname"] = nameB
@@ -45,7 +49,10 @@ def two_gateways(config):
     discPortB = configB.getint("discovery", "port") + 1
     configB.config["gateway"]["port"] = str(portB)
     configB.config["discovery"]["port"] = str(discPortB)
-    configB.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x0C"
+    if os.cpu_count() >= 4:
+        configB.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x0C"
+    else:
+        configB.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
 
     ceph_utils = CephUtils(config)
     with (GatewayServer(configA) as gatewayA, GatewayServer(configB) as gatewayB):
@@ -124,20 +131,26 @@ def try_change_one_namespace_lb_group_no_listeners(caplog, subsys, nsid_to_chang
     caplog.clear()
     cli(["--server-port", "5502", "namespace", "change_load_balancing_group",
          "--subsystem", subsys, "--nsid", nsid_to_change, "--load-balancing-group", new_group])
-    time.sleep(8)
-    assert "is owned by gateway None so try this command from it" in caplog.text
+    time.sleep(15)
+    assert f"Changing load balancing group of namespace {nsid_to_change} in {subsys} " \
+           f"to {new_group}: Successful" in caplog.text
+    assert "try running the command from there" not in caplog.text
+    assert f"Received manual request to change load balancing group for namespace with ID " \
+           f"{nsid_to_change} in {subsys} to {new_group}, context: <grpc._server" in caplog.text
+    assert f"Received manual request to change load balancing group for namespace with ID " \
+           f"{nsid_to_change} in {subsys} to {new_group}, context: None" in caplog.text
 
 
 def change_one_namespace_lb_group(caplog, subsys, nsid_to_change, new_group):
     caplog.clear()
     cli(["--server-port", "5502", "namespace", "change_load_balancing_group",
          "--subsystem", subsys, "--nsid", nsid_to_change, "--load-balancing-group", new_group])
-    time.sleep(8)
-    if "so try this command from it" in caplog.text:
+    time.sleep(15)
+    if "try running the command from there" in caplog.text:
         caplog.clear()
         cli(["namespace", "change_load_balancing_group", "--subsystem", subsys,
              "--nsid", nsid_to_change, "--load-balancing-group", new_group])
-        time.sleep(8)
+        time.sleep(15)
 
     assert f"Changing load balancing group of namespace {nsid_to_change} in {subsys} " \
            f"to {new_group}: Successful" in caplog.text
@@ -165,7 +178,7 @@ def test_change_namespace_lb_group(caplog, two_gateways):
     cli(["namespace", "add", "--subsystem", subsystem, "--rbd-pool", pool,
          "--rbd-image", image, "--size", "16MB", "--rbd-create-image", "--uuid", uuid,
          "--load-balancing-group", anagrpid, "--force"])
-    time.sleep(10)
+    time.sleep(15)
     assert f"Adding namespace 1 to {subsystem}: Successful" in caplog.text
     assert f"get_cluster cluster_name='cluster_context_{anagrpid}_0'" in caplog.text
     assert f"Received request to add namespace to {subsystem}, ana group {anagrpid}, " \
@@ -188,6 +201,7 @@ def test_change_namespace_lb_group(caplog, two_gateways):
     assert '"w_mbytes_per_second": "0",' in caplog.text
     assert '"auto_visible": true,' in caplog.text
     assert '"hosts": []' in caplog.text
+    time.sleep(15)
     caplog.clear()
     cli(["--server-port", "5502", "--format", "json", "namespace", "list",
          "--subsystem", subsystem, "--nsid", "1"])
@@ -202,6 +216,19 @@ def test_change_namespace_lb_group(caplog, two_gateways):
     assert '"auto_visible": true,' in caplog.text
     assert '"hosts": []' in caplog.text
     try_change_one_namespace_lb_group_no_listeners(caplog, subsystem, "1", anagrpid2)
+    caplog.clear()
+    cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "1"])
+    assert '"nsid": 1,' in caplog.text
+    assert f'"uuid": "{uuid}",' in caplog.text
+    assert f'"load_balancing_group": {anagrpid2},' in caplog.text
+    assert f'"load_balancing_group": {anagrpid},' not in caplog.text
+    try_change_one_namespace_lb_group_no_listeners(caplog, subsystem, "1", anagrpid)
+    caplog.clear()
+    cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "1"])
+    assert '"nsid": 1,' in caplog.text
+    assert f'"uuid": "{uuid}",' in caplog.text
+    assert f'"load_balancing_group": {anagrpid},' in caplog.text
+    assert f'"load_balancing_group": {anagrpid2},' not in caplog.text
     caplog.clear()
     cli(["--server-port", "5502", "listener", "add", "--subsystem", subsystem,
          "--host-name", "GatewayBB", "--traddr", "127.0.0.1", "--trsvcid", "4420"])
@@ -237,7 +264,7 @@ def test_change_namespace_lb_group(caplog, two_gateways):
     cli(["namespace", "add", "--subsystem", subsystem, "--uuid", uuid2,
          "--rbd-pool", pool, "--rbd-image", f"{image}2", "--size", "16MB", "--rbd-create-image",
          "--load-balancing-group", anagrpid2, "--force"])
-    time.sleep(10)
+    time.sleep(15)
     assert f"Adding namespace 2 to {subsystem}: Successful" in caplog.text
     assert f"get_cluster cluster_name='cluster_context_{anagrpid2}_0'" in caplog.text
     assert f"Received request to add namespace to {subsystem}, ana group {anagrpid2}, " \
@@ -279,7 +306,7 @@ def test_change_namespace_lb_group(caplog, two_gateways):
     assert f"Deleting namespace 2 from {subsystem}: Successful" in caplog.text
     time.sleep(15)
     create_namespaces(caplog, namespace_count, subsystem)
-    time.sleep(10)
+    time.sleep(15)
     verify_namespaces(caplog, "5500", subsystem, 1, namespace_count // 2, anagrpid)
     verify_namespaces(caplog, "5500", subsystem, 1 + (namespace_count // 2),
                       namespace_count, anagrpid2)
@@ -308,7 +335,7 @@ def test_change_namespace_lb_group(caplog, two_gateways):
                                                 int(anagrpid2))
 
     switch_namespaces_lb_group(caplog, namespace_count, subsystem)
-    time.sleep(5)
+    time.sleep(15)
     verify_namespaces(caplog, "5500", subsystem, 1, namespace_count // 2, anagrpid2)
     verify_namespaces(caplog, "5500", subsystem, 1 + (namespace_count // 2),
                       namespace_count, anagrpid)

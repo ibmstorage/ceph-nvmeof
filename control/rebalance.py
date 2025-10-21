@@ -11,12 +11,12 @@ import threading
 import time
 from .proto import gateway_pb2 as pb2
 
-MIN_LOAD = 2000
-
 
 class Rebalance:
     """Miscellaneous functions which do rebalance of ANA groups
     """
+
+    INVALID_LOAD_BALANCING_GROUP = 18446744073709551616    # should be bigger than any valid NSID
 
     def __init__(self, gateway_service):
         self.logger = gateway_service.logger
@@ -40,7 +40,11 @@ class Rebalance:
 
     def auto_rebalance_task(self, death_event):
         """Periodically calls for auto rebalance."""
+        self.logger.debug(f"Rebalance thread id is {self.auto_rebalance.native_id}")
         while (self.rebalance_period_sec > 0):
+            while self.gw_srv.gateway_state.update_is_active_lock.locked():
+                time.sleep(0.5)         # wait until update is over
+
             for i in range(self.rebalance_max_ns_to_change_lb_grp):
                 try:
                     rc = self.gw_srv.execute_grpc_function(self.rebalance_logic, None, "context")
@@ -56,7 +60,7 @@ class Rebalance:
             time.sleep(self.rebalance_period_sec)
 
     def find_min_loaded_group(self, grp_list) -> int:
-        min_load = MIN_LOAD
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         chosen_ana_group = 0
         chosen_nqn = "null"
         for ana_grp in self.gw_srv.ana_grp_ns_load:
@@ -66,7 +70,7 @@ class Rebalance:
                 if self.gw_srv.ana_grp_ns_load[ana_grp] <= min_load:
                     min_load = self.gw_srv.ana_grp_ns_load[ana_grp]
                     chosen_ana_group = ana_grp
-        min_load = MIN_LOAD
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         self.logger.debug(f"chosen ana-group {chosen_ana_group}")
         if chosen_ana_group != 0:
             for nqn in self.gw_srv.ana_grp_subs_load[chosen_ana_group]:
@@ -78,23 +82,39 @@ class Rebalance:
         return chosen_ana_group, chosen_nqn
 
     def find_min_loaded_group_in_subsys(self, nqn, grp_list) -> int:
-        min_load = MIN_LOAD
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         chosen_ana_group = 0
+        min_groups = set()
         for ana_grp in grp_list:
             if self.gw_srv.ana_grp_ns_load[ana_grp] == 0:
                 self.gw_srv.ana_grp_subs_load[ana_grp][nqn] = 0
+                self.logger.debug(f"chosen ana_grp {ana_grp}, min load = {0}")
                 return 0, ana_grp
         for ana_grp in self.gw_srv.ana_grp_subs_load:
             if ana_grp in grp_list:
                 if nqn in self.gw_srv.ana_grp_subs_load[ana_grp]:
-                    if self.gw_srv.ana_grp_subs_load[ana_grp][nqn] <= min_load:
+                    if self.gw_srv.ana_grp_subs_load[ana_grp][nqn] < min_load:
                         min_load = self.gw_srv.ana_grp_subs_load[ana_grp][nqn]
-                        chosen_ana_group = ana_grp
+                        min_groups = {ana_grp}
+                    elif self.gw_srv.ana_grp_subs_load[ana_grp][nqn] == min_load:
+                        min_groups.add(ana_grp)
                 else:            # still  no load on this ana and subs
-                    chosen_ana_group = ana_grp
-                    self.gw_srv.ana_grp_subs_load[chosen_ana_group][nqn] = 0
-                    min_load = 0
-                    break
+                    self.gw_srv.ana_grp_subs_load[ana_grp][nqn] = 0
+                    if self.gw_srv.ana_grp_subs_load[ana_grp][nqn] < min_load:
+                        min_load = 0
+                        min_groups = {ana_grp}
+                    elif self.gw_srv.ana_grp_subs_load[ana_grp][nqn] == min_load:
+                        min_groups.add(ana_grp)
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
+        for ana_grp in min_groups:
+            # chose the minimum loaded ana group from the ana groups in min_groups set
+            self.logger.debug(f"pass min_grops set: ana_grp {ana_grp} "
+                              f"load {self.gw_srv.ana_grp_ns_load[ana_grp]}")
+            # find minimum loaded self.gw_srv.ana_grp_ns_load
+            if self.gw_srv.ana_grp_ns_load[ana_grp] < min_load:
+                min_load = self.gw_srv.ana_grp_ns_load[ana_grp]
+                self.logger.debug(f"chosen ana_grp {ana_grp}, min load = {min_load}")
+                chosen_ana_group = ana_grp
         return min_load, chosen_ana_group
 
     # 1. Not allowed to perform regular rebalance when scale_down rebalance is ongoing
@@ -104,12 +124,17 @@ class Rebalance:
     #    index of ANA group that is currently responsible for rebalance
     def rebalance_logic(self, request, context) -> int:
         now = time.time()
+        rebalance_attr = ()
+        grps_list = self.ceph_utils.get_number_created_gateways(self.gw_srv.gateway_pool,
+                                                                self.gw_srv.gateway_group, False)
         worker_ana_group = self.ceph_utils.get_rebalance_ana_group()
         self.logger.debug(f"Called rebalance logic: current rebalancing ana "
                           f"group {worker_ana_group}")
+        if worker_ana_group == 0:
+            self.logger.info(f"Auto rebalance is not supported - index {worker_ana_group}")
+            return 1
         ongoing_scale_down_rebalance = False
-        grps_list = self.ceph_utils.get_number_created_gateways(self.gw_srv.gateway_pool,
-                                                                self.gw_srv.gateway_group, False)
+        invalid_ana_group = 0
         if not self.ceph_utils.is_rebalance_supported():
             self.logger.info("Auto rebalance is not supported with the curent ceph version")
             return 1
@@ -122,7 +147,7 @@ class Rebalance:
                     self.logger.info(f"Scale-down rebalance is ongoing for ANA group {ana_grp} "
                                      f"current load {self.gw_srv.ana_grp_ns_load[ana_grp]}")
                     self.last_scale_down_ts = now
-                    break
+                    invalid_ana_group = ana_grp
         num_active_ana_groups = len(grps_list)
         for ana_grp in self.gw_srv.ana_grp_state:
             if self.gw_srv.ana_grp_state[ana_grp] == pb2.ana_state.OPTIMIZED:
@@ -171,12 +196,13 @@ class Rebalance:
                                                   f"nqn {nqn} ")
                                 min_load, min_ana_grp = \
                                     self.find_min_loaded_group_in_subsys(nqn, grps_list)
-                                le_target = \
-                                    (self.gw_srv.ana_grp_subs_load[min_ana_grp][nqn] + 1) <= \
-                                    target_subs_per_ana
-                                load_eq = (self.gw_srv.ana_grp_subs_load[min_ana_grp][nqn] + 1) == \
-                                          (self.gw_srv.ana_grp_subs_load[ana_grp][nqn] - 1)
-                                if le_target or load_eq:
+
+                                my_eq_more = (self.gw_srv.ana_grp_subs_load[ana_grp][nqn] - 1) >= \
+                                             (self.gw_srv.ana_grp_subs_load[min_ana_grp][nqn] + 1)
+
+                                worth = (self.gw_srv.ana_grp_ns_load[ana_grp] -         # noqa: W504
+                                         self.gw_srv.ana_grp_ns_load[min_ana_grp] > 2)  # noqa: W504
+                                if my_eq_more:
                                     self.logger.info(f"Start rebalance (regular) in subsystem "
                                                      f"{nqn}, dest ana {min_ana_grp}, dest ana "
                                                      f"load per subs {min_load}")
@@ -184,21 +210,36 @@ class Rebalance:
                                     self.ns_rebalance(context, ana_grp, min_ana_grp, 1, nqn)
                                     return 0
                                 else:
+                                    # add to tuple : ana , min-ana , nqn , worth
+                                    if worth:
+                                        rebalance_attr = (ana_grp, min_ana_grp, nqn, worth)
                                     self.logger.debug(f"Found min loaded subsystem {nqn}, ana "
                                                       f"{min_ana_grp}, load {min_load} does not "
                                                       f"fit rebalance criteria!")
                                     continue
             if ongoing_scale_down_rebalance and (num_active_ana_groups == self.ceph_utils.num_gws):
                 # this GW feels scale_down condition on ana_grp but no GW in Deleting
-                # state in the current mon.map . Experimental code - just for logs
-                self.logger.info(f"Seems like scale-down deadlock on group {ana_grp}")
+                # state in the current mon.map. So need to change LB group for all NS
+                # related to the invalid group - group that was deleted by GW monitor
+                self.logger.info(f"Detected deleted LB group {invalid_ana_group}")
                 if (self.gw_srv.ana_grp_state[worker_ana_group]) == pb2.ana_state.OPTIMIZED:
                     min_ana_grp, chosen_nqn = self.find_min_loaded_group(grps_list)
-                    if chosen_nqn != "null":
+                    if chosen_nqn != "null" and invalid_ana_group != 0:
                         self.logger.info(f"Start rebalance (deadlock resolving) dest. ana group"
                                          f" {min_ana_grp}, subsystem {chosen_nqn}")
-                        # self.ns_rebalance(context, ana_grp, min_ana_grp, 1, "0")
+                        self.ns_rebalance(context, invalid_ana_group, min_ana_grp, 1, "0")
                         return 0
+                    else:
+                        self.logger.info(f"rebalance (deadlock resolving) is not allowed "
+                                         f" invalid group {invalid_ana_group},"
+                                         f" subsystem {chosen_nqn}")
+        # if tuple is not empty
+        if rebalance_attr:
+            self.logger.info(
+                f"Start rebalance (fixing regular) in subsystem "
+                f"ana {rebalance_attr[0]}, dest ana {rebalance_attr[1]} nqn {rebalance_attr[2]}")
+            self.ns_rebalance(context, rebalance_attr[0], rebalance_attr[1], 1, rebalance_attr[2])
+            return 0
         return 1
 
     def ns_rebalance(self, context, ana_id, dest_ana_id, num, subs_nqn) -> int:
@@ -215,6 +256,10 @@ class Rebalance:
                                  f"{subsys}, anagrpid: {ana_id}")
                 change_lb_group_req = pb2.namespace_change_load_balancing_group_req(
                     subsystem_nqn=subsys, nsid=nsid, anagrpid=dest_ana_id, auto_lb_logic=True)
+                if not self.gw_srv.up_and_running:
+                    self.logger.warning("SPDK is not up and running!")
+                    return 0
+
                 ret = self.gw_srv.namespace_change_load_balancing_group_safe(change_lb_group_req,
                                                                              context)
                 self.logger.debug(f"ret namespace_change_load_balancing_group  {ret}")
