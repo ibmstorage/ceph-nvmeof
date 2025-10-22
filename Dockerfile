@@ -120,7 +120,7 @@ WORKDIR $APPDIR
 #------------------------------------------------------------------------------
 FROM python-intermediate AS builder-base
 ARG PDM_VERSION=2.17.3 \
-    PDM_INSTALL_CMD=sync \
+    PDM_INSTALL_CMD=install \
     PDM_INSTALL_FLAGS="-v --no-isolation --no-self --no-editable" \
     PDM_INSTALL_DEV=""
 ENV PDM_INSTALL_FLAGS="$PDM_INSTALL_FLAGS $PDM_INSTALL_DEV"
@@ -132,7 +132,7 @@ RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
     dnf install -y python3-pip && \
-    dnf install -y gcc python3-devel
+    dnf install -y gcc gcc-c++ python3-devel
 RUN \
     --mount=type=cache,target=/root/.cache/pip \
     pip install -U pip setuptools wheel
@@ -147,11 +147,16 @@ FROM builder-base AS builder
 COPY pyproject.toml pdm.lock pdm.toml ./
 RUN \
     --mount=type=cache,target=/root/.cache/pdm \
-    pdm "$PDM_INSTALL_CMD" $PDM_INSTALL_FLAGS
+    pdm install -v --no-isolation --no-self --no-editable
 
 COPY . .
 RUN pdm run protoc
 
 #------------------------------------------------------------------------------
 FROM python-intermediate
-COPY --from=builder $APPDIR .
+COPY --from=builder /src /src
+
+ENV PYTHONPATH=/src/src:$PYTHONPATH
+
+ENTRYPOINT ["python3", "-m", "control.cli"]
+CMD []
