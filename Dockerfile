@@ -1,6 +1,6 @@
 # syntax = docker/dockerfile:1.4
 
-ARG NVMEOF_SPDK_VERSION \
+ARG SPDK_IMAGE \
     CONTAINER_REGISTRY \
     NVMEOF_TARGET  # either 'gateway' or 'cli'
 
