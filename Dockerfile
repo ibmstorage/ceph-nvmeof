@@ -13,17 +13,19 @@ CMD []
 
 #------------------------------------------------------------------------------
 # Base image for NVMEOF_TARGET=gateway (nvmeof-gateway)
-FROM ${CONTAINER_REGISTRY:-quay.io/ceph}/spdk:${NVMEOF_SPDK_VERSION:-NULL} AS base-gateway
-RUN \
-    --mount=type=cache,target=/var/cache/dnf \
-    --mount=type=cache,target=/var/lib/dnf \
-    dnf install -y python3-rados && \
-    dnf install -y python3-rbd && \
-    dnf config-manager --set-enabled crb && \
-    dnf install -y ceph-mon-client-nvmeof
+ARG SPDK_IMAGE
+FROM --platform=$BUILDPLATFORM ${SPDK_IMAGE} AS base-gateway
+
+RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id)
+
+RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpms
+
+RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof librbd1
+
 ENTRYPOINT ["python3", "-m", "control"]
 CMD ["-c", "/src/ceph-nvmeof.conf"]
 
+RUN subscription-manager unregister
 #------------------------------------------------------------------------------
 # Intermediate layer for Python set-up
 FROM base-$NVMEOF_TARGET AS python-intermediate
