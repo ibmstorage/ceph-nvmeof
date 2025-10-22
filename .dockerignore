@@ -8,3 +8,7 @@
 !pdm.toml
 !README.md
 !LICENSE
+!spdk/
+!spdk/**
+!spdk/scripts/
+!spdk/scripts/**
