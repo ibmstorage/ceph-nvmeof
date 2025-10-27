@@ -157,7 +157,7 @@ RUN pdm run protoc
 FROM python-intermediate
 COPY --from=builder /src /src
 
-ENV PYTHONPATH=/src/src:$PYTHONPATH
+ENV PYTHONPATH=/src/src:/src/spdk/python:$PYTHONPATH
 
 COPY ceph-nvmeof.conf /src/ceph-nvmeof.conf
 COPY entrypoint.sh /entrypoint.sh
