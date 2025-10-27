@@ -157,6 +157,7 @@ FROM python-intermediate
 COPY --from=builder /src /src
 
 ENV PYTHONPATH=/src/src:$PYTHONPATH
-
-ENTRYPOINT ["python3", "-m", "control.cli"]
-CMD []
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENV NVMEOF_TARGET=${NVMEOF_TARGET}
+ENTRYPOINT ["/entrypoint.sh"]
