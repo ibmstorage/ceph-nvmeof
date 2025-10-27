@@ -13,3 +13,4 @@
 !spdk/scripts/
 !spdk/scripts/**
 !entrypoint.sh
+!ceph-nvmeof.conf

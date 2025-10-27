@@ -158,6 +158,8 @@ FROM python-intermediate
 COPY --from=builder /src /src
 
 ENV PYTHONPATH=/src/src:$PYTHONPATH
+
+COPY ceph-nvmeof.conf /src/ceph-nvmeof.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENV NVMEOF_TARGET=${NVMEOF_TARGET}
