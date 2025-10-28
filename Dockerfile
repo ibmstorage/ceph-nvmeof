@@ -22,8 +22,10 @@ RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpm
 
 RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof librbd1
 
+COPY ceph-nvmeof.conf ceph-nvmeof.conf
+
 ENTRYPOINT ["python3", "-m", "control"]
-CMD ["-c", "/src/ceph-nvmeof.conf"]
+CMD ["-c", "ceph-nvmeof.conf"]
 
 RUN subscription-manager unregister
 
