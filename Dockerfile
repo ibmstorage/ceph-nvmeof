@@ -14,7 +14,14 @@ CMD []
 #------------------------------------------------------------------------------
 # Base image for NVMEOF_TARGET=gateway (nvmeof-gateway)
 ARG SPDK_IMAGE
+ARG REMOTE_SOURCES_DIR=/remote-source
+ARG REMOTE_SOURCES=ceph-nvmeof
+
 FROM --platform=$BUILDPLATFORM ${SPDK_IMAGE} AS base-gateway
+
+COPY $REMOTE_SOURCES $REMOTE_SOURCES_DIR
+
+WORKDIR ${REMOTE_SOURCES_DIR}/${REMOTE_SOURCES}/ceph-nvmeof/app
 
 RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id)
 
@@ -22,7 +29,7 @@ RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpm
 
 RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof librbd1
 
-COPY ceph-nvmeof.conf ceph-nvmeof.conf
+RUN mkdir -p /src
 
 ENTRYPOINT ["python3", "-m", "control"]
 CMD ["-c", "ceph-nvmeof.conf"]
