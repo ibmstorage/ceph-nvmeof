@@ -160,6 +160,7 @@ RUN \
     pdm install -v --no-isolation --no-self --no-editable
 
 COPY . .
+COPY ceph-nvmeof.conf /src/
 RUN pdm run protoc
 
 #------------------------------------------------------------------------------
