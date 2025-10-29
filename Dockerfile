@@ -21,7 +21,7 @@ FROM --platform=$BUILDPLATFORM ${SPDK_IMAGE} AS base-gateway
 
 COPY $REMOTE_SOURCES $REMOTE_SOURCES_DIR
 
-WORKDIR ${REMOTE_SOURCES_DIR}/${REMOTE_SOURCES}/ceph-nvmeof/app
+WORKDIR ${REMOTE_SOURCES_DIR}/${REMOTE_SOURCES}/app
 
 RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id)
 

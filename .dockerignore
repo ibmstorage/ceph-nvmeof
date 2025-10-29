@@ -12,4 +12,3 @@
 !spdk/**
 !spdk/scripts/
 !spdk/scripts/**
-!ceph-nvmeof.conf
