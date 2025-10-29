@@ -54,7 +54,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHON_MINOR=9 \
     PDM_PREFER_BINARY=:all:
 
-ARG APPDIR=/src
+ARG APPDIR=/remote-source/ceph-nvmeof/app
 
 ARG NVMEOF_NAME \
     NVMEOF_SUMMARY \
@@ -160,11 +160,8 @@ RUN \
     pdm install -v --no-isolation --no-self --no-editable
 
 COPY . .
-COPY ceph-nvmeof.conf /src/
 RUN pdm run protoc
 
 #------------------------------------------------------------------------------
 FROM python-intermediate
-COPY --from=builder /src /src
-
-ENV PYTHONPATH=/src:$PYTHONPATH
+COPY --from=builder /src /remote-source/ceph-nvmeof/app
