@@ -827,7 +827,7 @@ class OmapGatewayState(GatewayState):
             self.logger.info(f"{self.omap_name} OMAP object already exists.")
         except Exception:
             self.logger.exception("Unable to create OMAP, exiting!")
-            raise
+           # raise
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.cleanup_omap()
