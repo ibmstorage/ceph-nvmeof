@@ -29,8 +29,6 @@ RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpm
 
 RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof librbd1
 
-RUN mkdir -p /src
-
 ENTRYPOINT ["python3", "-m", "control"]
 CMD ["-c", "ceph-nvmeof.conf"]
 
@@ -164,4 +162,4 @@ RUN pdm run protoc
 
 #------------------------------------------------------------------------------
 FROM python-intermediate
-COPY --from=builder /src /remote-source/ceph-nvmeof/app
+COPY --from=builder /remote-source/ceph-nvmeof/app /remote-source/ceph-nvmeof/app
