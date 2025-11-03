@@ -1,7 +1,6 @@
 # syntax = docker/dockerfile:1.4
 
 ARG SPDK_IMAGE \
-ARG SPDK_IMAGE \
     CONTAINER_REGISTRY \
     NVMEOF_TARGET  # either 'gateway' or 'cli'
 
@@ -62,6 +61,7 @@ ARG NVMEOF_NAME \
     NVMEOF_DESCRIPTION \
     NVMEOF_URL \
     NVMEOF_VERSION \
+    NVMEOF_CLI_VERSION \
     NVMEOF_MAINTAINER \
     NVMEOF_TAGS \
     NVMEOF_WANTS \
@@ -80,6 +80,7 @@ ARG NVMEOF_NAME \
     HUGEPAGES_DIR
 
 ENV NVMEOF_VERSION="${NVMEOF_VERSION}" \
+      NVMEOF_CLI_VERSION="${NVMEOF_CLI_VERSION}" \
       NVMEOF_GIT_REPO="${NVMEOF_GIT_REPO}" \
       NVMEOF_GIT_BRANCH="${NVMEOF_GIT_BRANCH}" \
       NVMEOF_GIT_COMMIT="${NVMEOF_GIT_COMMIT}" \
@@ -132,7 +133,6 @@ WORKDIR $APPDIR
 FROM python-intermediate AS builder-base
 ARG PDM_VERSION=2.17.3 \
     PDM_INSTALL_CMD=install \
-    PDM_INSTALL_CMD=install \
     PDM_INSTALL_FLAGS="-v --no-isolation --no-self --no-editable" \
     PDM_INSTALL_DEV=""
 ENV PDM_INSTALL_FLAGS="$PDM_INSTALL_FLAGS $PDM_INSTALL_DEV"
@@ -144,7 +144,6 @@ RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
     dnf install -y python3-pip && \
-    dnf install -y gcc gcc-c++ python3-devel
     dnf install -y gcc gcc-c++ python3-devel
 RUN \
     --mount=type=cache,target=/root/.cache/pip \
@@ -161,7 +160,6 @@ COPY pyproject.toml pdm.lock pdm.toml ./
 RUN \
     --mount=type=cache,target=/root/.cache/pdm \
     pdm install -v --no-isolation --no-self --no-editable
-    pdm install -v --no-isolation --no-self --no-editable
 
 COPY . .
 COPY ceph-nvmeof.conf /src/
@@ -169,6 +167,8 @@ RUN pdm run protoc
 
 #------------------------------------------------------------------------------
 FROM python-intermediate
+ARG NVMEOF_CLI_VERSION
+ENV NVMEOF_CLI_VERSION="${NVMEOF_CLI_VERSION}"
 COPY --from=builder /src /src
 
 ENV PYTHONPATH=/src:$PYTHONPATH
