@@ -1,6 +1,7 @@
 # syntax = docker/dockerfile:1.4
 
 ARG SPDK_IMAGE \
+ARG SPDK_IMAGE \
     CONTAINER_REGISTRY \
     NVMEOF_TARGET  # either 'gateway' or 'cli'
 
@@ -14,7 +15,14 @@ CMD []
 #------------------------------------------------------------------------------
 # Base image for NVMEOF_TARGET=gateway (nvmeof-gateway)
 ARG SPDK_IMAGE
+ARG REMOTE_SOURCES_DIR=/remote-source
+ARG REMOTE_SOURCES=ceph-nvmeof
+
 FROM --platform=$BUILDPLATFORM ${SPDK_IMAGE} AS base-gateway
+
+COPY $REMOTE_SOURCES $REMOTE_SOURCES_DIR
+
+WORKDIR ${REMOTE_SOURCES_DIR}/${REMOTE_SOURCES}/app
 
 RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id)
 
@@ -22,8 +30,10 @@ RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpm
 
 RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof librbd1
 
+RUN mkdir -p /src
+
 ENTRYPOINT ["python3", "-m", "control"]
-CMD ["-c", "/src/ceph-nvmeof.conf"]
+CMD ["-c", "ceph-nvmeof.conf"]
 
 RUN subscription-manager unregister
 
@@ -122,6 +132,7 @@ WORKDIR $APPDIR
 FROM python-intermediate AS builder-base
 ARG PDM_VERSION=2.17.3 \
     PDM_INSTALL_CMD=install \
+    PDM_INSTALL_CMD=install \
     PDM_INSTALL_FLAGS="-v --no-isolation --no-self --no-editable" \
     PDM_INSTALL_DEV=""
 ENV PDM_INSTALL_FLAGS="$PDM_INSTALL_FLAGS $PDM_INSTALL_DEV"
@@ -133,6 +144,7 @@ RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
     dnf install -y python3-pip && \
+    dnf install -y gcc gcc-c++ python3-devel
     dnf install -y gcc gcc-c++ python3-devel
 RUN \
     --mount=type=cache,target=/root/.cache/pip \
@@ -149,15 +161,14 @@ COPY pyproject.toml pdm.lock pdm.toml ./
 RUN \
     --mount=type=cache,target=/root/.cache/pdm \
     pdm install -v --no-isolation --no-self --no-editable
+    pdm install -v --no-isolation --no-self --no-editable
 
 COPY . .
+COPY ceph-nvmeof.conf /src/
 RUN pdm run protoc
 
 #------------------------------------------------------------------------------
 FROM python-intermediate
 COPY --from=builder /src /src
 
-ENV PYTHONPATH=/src/src:$PYTHONPATH
-
-ENTRYPOINT ["python3", "-m", "control.cli"]
-CMD []
+ENV PYTHONPATH=/src:$PYTHONPATH
