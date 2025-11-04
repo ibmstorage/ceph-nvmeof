@@ -11,9 +11,5 @@
 !spdk/
 !spdk/**
 !spdk/scripts/
-<<<<<<< HEAD
-!spdk/scripts/**
-=======
 !spdk/scripts/**
 !ceph-nvmeof.conf
->>>>>>> 3a833c0 (nvmeof: updating .dockerignore)
