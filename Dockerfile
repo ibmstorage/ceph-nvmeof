@@ -139,14 +139,16 @@ ENV PDM_INSTALL_FLAGS="$PDM_INSTALL_FLAGS $PDM_INSTALL_DEV"
 
 ENV PDM_CHECK_UPDATE=0
 
+RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key \
+    subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id) && \
+    subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpms
+
 # https://pdm.fming.dev/latest/usage/advanced/#use-pdm-in-a-multi-stage-dockerfile
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
-    dnf install -y gcc gcc-c++ python3-devel && \
-    python3 -m ensurepip --upgrade && \
-    pip3 install --upgrade pip setuptools wheel
-
+    dnf install -y python3-pip && \
+    dnf install -y gcc gcc-c++ python3-devel
 
 RUN \
     --mount=type=cache,target=/root/.cache/pip \
@@ -175,3 +177,5 @@ ENV NVMEOF_CLI_VERSION="${NVMEOF_CLI_VERSION}"
 COPY --from=builder /src /src
 
 ENV PYTHONPATH=/src:$PYTHONPATH
+
+RUN subscription-manager unregister
