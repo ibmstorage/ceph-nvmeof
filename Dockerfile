@@ -158,6 +158,7 @@ RUN \
     --mount=type=cache,target=/root/.cache/pip \
     pip install pdm==$PDM_VERSION
 
+RUN subscription-manager unregister
 #------------------------------------------------------------------------------
 FROM builder-base AS builder
 
@@ -177,5 +178,3 @@ ENV NVMEOF_CLI_VERSION="${NVMEOF_CLI_VERSION}"
 COPY --from=builder /src /src
 
 ENV PYTHONPATH=/src:$PYTHONPATH
-
-RUN subscription-manager unregister
