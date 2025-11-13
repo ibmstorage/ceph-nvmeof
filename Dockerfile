@@ -1,4 +1,4 @@
-# syntax = docker/dockerfile:1.4
+# syntax = docker/dockerfile:1.20
 
 ARG NVMEOF_SPDK_VERSION \
     CONTAINER_REGISTRY \
