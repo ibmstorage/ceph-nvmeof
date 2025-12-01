@@ -27,7 +27,7 @@ RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscrip
 
 RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpms
 
-RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof librbd1
+RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof
 
 RUN mkdir -p /src
 
