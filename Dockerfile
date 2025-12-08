@@ -27,7 +27,7 @@ RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscrip
 
 RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpms
 
-RUN dnf install -y --allowerasing python3-rados python3-rbd gdb ceph-mon-client-nvmeof
+RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof
 
 RUN mkdir -p /src
 
@@ -43,7 +43,7 @@ FROM base-$NVMEOF_TARGET AS python-intermediate
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
-    dnf update -y --nobest
+    dnf update -y
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=UTF-8 \
@@ -139,17 +139,12 @@ ENV PDM_INSTALL_FLAGS="$PDM_INSTALL_FLAGS $PDM_INSTALL_DEV"
 
 ENV PDM_CHECK_UPDATE=0
 
-RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key \
-    subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id) && \
-    subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpms
-
 # https://pdm.fming.dev/latest/usage/advanced/#use-pdm-in-a-multi-stage-dockerfile
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
     dnf install -y python3-pip && \
     dnf install -y gcc gcc-c++ python3-devel
-
 RUN \
     --mount=type=cache,target=/root/.cache/pip \
     pip install -U pip setuptools wheel
@@ -158,7 +153,6 @@ RUN \
     --mount=type=cache,target=/root/.cache/pip \
     pip install pdm==$PDM_VERSION
 
-RUN subscription-manager unregister
 #------------------------------------------------------------------------------
 FROM builder-base AS builder
 
