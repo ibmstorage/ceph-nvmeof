@@ -11,7 +11,7 @@ ARG DNF_OPTS="\
   "
 ARG ACCEL_CONFIG_SRC="/accel-config"
 
-FROM quay.io/centos/centos:stream9 AS build
+FROM --platform=$BUILDPLATFORM quay.io/centos/centos:stream9 AS build
 
 ARG SPDK_CEPH_VERSION \
     CEPH_CLUSTER_CEPH_REPO_BASEURL \
@@ -52,7 +52,7 @@ tsflags=nodocs
 EOF
 
 ARG SPDK_CEPH_VERSION
-ARG CEPH_CLUSTER_CEPH_REPO_BASEURL=https://download.ceph.com/rpm-${SPDK_CEPH_VERSION}/el9/x86_64
+ARG CEPH_CLUSTER_CEPH_REPO_BASEURL=https://download.ceph.com/rpm-${SPDK_CEPH_VERSION}/el9/$basearch
 
 COPY <<EOF /etc/yum.repos.d/ceph.repo
 [Ceph]
@@ -128,18 +128,18 @@ RUN \
 RUN make -C ./examples/bdev/bdevperf
 
 #------------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS rpm-export
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS rpm-export
 COPY --from=build /root/rpmbuild/rpm /rpm
 COPY --from=build /root/rpmbuild/RPMS /rpm
 
 #------------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 as spdk
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 as spdk
 
 ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
     DNF_OPTS
 
-ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/"
+ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/$basearch/os/Packages/"
 # This would become obsolete as the release rolls out new packages
 ARG SPDK_CENTOS_REPO_VER="9.0-28.el9"
 
@@ -201,7 +201,7 @@ ENTRYPOINT [ "/usr/local/bin/nvmf_tgt" ]
 CMD [ "-u", "-r", "/var/tmp/spdk.sock" ]
 
 #------------------------------------------------------------------------------
-FROM spdk AS bdevperf
+FROM --platform=$BUILDPLATFORM spdk AS bdevperf
 
 # Default test run duration in secs
 ENV BDEVPERF_TEST_DURATION="90"
