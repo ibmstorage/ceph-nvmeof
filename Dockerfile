@@ -31,6 +31,10 @@ RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof
 
 RUN mkdir -p /src
 
+RUN mkdir -p /remote-source/ceph-nvmeof/app/ && ln -s /src/ceph-nvmeof.conf /remote-source/ceph-nvmeof/app/ceph-nvmeof.conf
+
+WORKDIR /src
+
 ENTRYPOINT ["python3", "-m", "control"]
 CMD ["-c", "ceph-nvmeof.conf"]
 
