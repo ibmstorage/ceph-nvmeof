@@ -7,6 +7,7 @@ from control.proto import gateway_pb2_grpc as pb2_grpc
 import copy
 import time
 import os
+import os
 
 image = "mytestdevimage"
 pool = "rbd"
@@ -36,6 +37,10 @@ def two_gateways(config):
         configA.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x03"
     else:
         configA.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
+    if os.cpu_count() >= 4:
+        configA.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x03"
+    else:
+        configA.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
     portA = configA.getint("gateway", "port")
     configB.config["gateway"]["name"] = nameB
     configB.config["gateway"]["override_hostname"] = nameB
@@ -44,6 +49,10 @@ def two_gateways(config):
     discPortB = configB.getint("discovery", "port") + 1
     configB.config["gateway"]["port"] = str(portB)
     configB.config["discovery"]["port"] = str(discPortB)
+    if os.cpu_count() >= 4:
+        configB.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x0C"
+    else:
+        configB.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
     if os.cpu_count() >= 4:
         configB.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x0C"
     else:
@@ -79,7 +88,8 @@ def test_change_namespace_visibility(caplog, two_gateways):
     assert f"create_subsystem {subsystem}: True" in caplog.text
     caplog.clear()
     cli(["namespace", "add", "--subsystem", subsystem, "--rbd-pool", pool,
-         "--rbd-image", f"{image}", "--size", "16MB", "--rbd-create-image"])
+         "--rbd-image", f"{image}", "--size", "16MB", "--rbd-create-image",
+         "--load-balancing-group", "1"])
     assert f"Adding namespace 1 to {subsystem}: Successful" in caplog.text
     caplog.clear()
     cli(["--format", "json", "namespace", "list", "--subsystem", subsystem, "--nsid", "1"])
@@ -94,13 +104,27 @@ def test_change_namespace_visibility(caplog, two_gateways):
     caplog.clear()
     cli(["namespace", "change_visibility", "--subsystem", subsystem,
          "--nsid", "1", "--auto-visible", "no"])
+    cli(["namespace", "change_load_balancing_group", "--subsystem", subsystem,
+         "--nsid", "1", "--load-balancing-group", "2"])
+    cli(["namespace", "set_rbd_trash_image", "--subsystem", subsystem,
+         "--nsid", "1", "--rbd-trash-image-on-delete", "yes"])
     assert f'Changing visibility of namespace 1 in {subsystem} to "visible to selected hosts": ' \
            f'Successful' in caplog.text
+    assert f"Changing load balancing group of namespace 1 in {subsystem} " \
+           f"to 2: Successful" in caplog.text
+    assert f'Setting RBD trash image flag for namespace 1 in {subsystem} to ' \
+           f'"trash on namespace deletion": Successful' in caplog.text
     assert f'Received request to change the visibility of namespace 1 in {subsystem} ' \
            f'to "visible to selected hosts", force: False, context: <grpc._server' in caplog.text
     time.sleep(90)
     assert f'Received request to change the visibility of namespace 1 in {subsystem} ' \
            f'to "visible to selected hosts", force: True, context: None' in caplog.text
+    assert f"Received manual request to change load balancing group for namespace with ID " \
+           f"1 in {subsystem} to 2, context: None" in caplog.text
+    assert f'Received request to set the RBD trash image flag of namespace 1 in ' \
+           f'{subsystem} to "trash on namespace deletion", context: ' \
+           f'None' in caplog.text
+    assert f"Received request to delete namespace 1 from {subsystem}" not in caplog.text
     assert f"Received request to remove namespace 1 from {subsystem}" not in caplog.text
     assert f"Received request to add namespace 1 to {subsystem}" not in caplog.text
     caplog.clear()

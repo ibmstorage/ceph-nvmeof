@@ -66,6 +66,9 @@ service Gateway {
 	// Set namespace's RBD trash image flag
 	rpc namespace_set_rbd_trash_image(namespace_set_rbd_trash_image_req) returns (req_status) {}
 
+	// Set namespace's auto resize flag
+	rpc namespace_set_auto_resize(namespace_set_auto_resize_req) returns (req_status) {}
+
 	// Deletes a namespace
 	rpc namespace_delete(namespace_delete_req) returns (req_status) {}
 
@@ -145,6 +148,8 @@ message namespace_add_req {
 	optional bool force = 10;
 	optional bool no_auto_visible = 11;
 	optional bool trash_image = 12;
+	optional bool disable_auto_resize = 13;
+	optional bool read_only = 14;
 }
 
 message namespace_resize_req {
@@ -168,6 +173,7 @@ message namespace_set_qos_req {
 	optional uint64 rw_mbytes_per_second = 5;
 	optional uint64 r_mbytes_per_second = 6;
 	optional uint64 w_mbytes_per_second = 7;
+	optional bool force = 8;
 }
 
 message namespace_change_load_balancing_group_req {
@@ -189,6 +195,12 @@ message namespace_set_rbd_trash_image_req {
 	string subsystem_nqn = 1;
 	uint32 nsid = 2;
 	bool trash_image = 3;
+}
+
+message namespace_set_auto_resize_req {
+	string subsystem_nqn = 1;
+	uint32 nsid = 2;
+	bool auto_resize = 3;
 }
 
 message namespace_delete_req {
@@ -259,6 +271,7 @@ message remove_host_req {
 
 message list_hosts_req {
 	string subsystem = 1;
+	optional bool clear_alerts = 2;
 }
 
 message list_connections_req {
@@ -297,14 +310,17 @@ message get_subsystems_req {
 }
 
 message get_spdk_nvmf_log_flags_and_level_req {
+	optional bool all_log_flags = 1;
 }
 
 message disable_spdk_nvmf_logs_req {
+	repeated string extra_log_flags = 1;
 }
 
 message set_spdk_nvmf_logs_req {
 	optional LogLevel log_level = 1;
 	optional LogLevel print_level = 2;
+	repeated string extra_log_flags = 3;
 }
 
 message get_gateway_info_req {
@@ -495,6 +511,7 @@ message host {
 	string nqn = 1;
 	optional bool use_psk = 2;
 	optional bool use_dhchap = 3;
+	optional bool disconnected_due_to_keepalive_timeout = 4;
 }
 
 message hosts_info {
@@ -517,6 +534,8 @@ message connection {
 	optional bool secure = 9;
 	optional bool use_psk = 10;
 	optional bool use_dhchap = 11;
+        optional string subsystem = 12;
+	optional bool disconnected_due_to_keepalive_timeout = 13;
 }
 
 message connections_info {
@@ -543,6 +562,8 @@ message namespace_cli {
 	repeated string hosts = 14;
 	optional string ns_subsystem_nqn = 15;
 	optional bool trash_image = 16;
+	optional bool disable_auto_resize = 17;
+	optional bool read_only = 18;
 }
 
 message namespaces_info {

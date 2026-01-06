@@ -6,6 +6,7 @@ from control.cephutils import CephUtils
 import grpc
 import time
 import os
+import os
 
 image = "mytestdevimage"
 pool = "rbd"
@@ -89,6 +90,10 @@ def gateway(config):
         config.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x01"
     else:
         config.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
+    if os.cpu_count() >= 4:
+        config.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x01"
+    else:
+        config.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
     ceph_utils = CephUtils(config)
 
     with GatewayServer(config) as gateway:
@@ -125,6 +130,10 @@ def gateway_encryption_disabled(config):
     config.config["gateway-logs"]["log_level"] = "debug"
     config.config["gateway"]["group"] = ""
     config.config["gateway"]["enable_key_encryption"] = "False"
+    if os.cpu_count() >= 4:
+        config.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x02"
+    else:
+        config.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
     if os.cpu_count() >= 4:
         config.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x02"
     else:
@@ -169,6 +178,10 @@ def gateway_no_encryption_key(config):
         config.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x04"
     else:
         config.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
+    if os.cpu_count() >= 4:
+        config.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x04"
+    else:
+        config.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
     ceph_utils = CephUtils(config)
 
     with GatewayServer(config) as gateway_no_encryption_key:
@@ -205,6 +218,10 @@ def gateway_no_key_encryption_disabled(config):
     config.config["gateway"]["group"] = ""
     config.config["gateway"]["enable_key_encryption"] = "False"
     config.config["gateway"]["encryption_key"] = "/etc/ceph/NOencryption.key"
+    if os.cpu_count() >= 4:
+        config.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x08"
+    else:
+        config.config["spdk"]["tgt_cmd_extra_args"] = "--disable-cpumask-locks"
     if os.cpu_count() >= 4:
         config.config["spdk"]["tgt_cmd_extra_args"] = "-m 0x08"
     else:
@@ -575,7 +592,7 @@ def test_change_key_to_all_hosts(caplog, gateway):
         rc = int(str(sysex))
         pass
     assert rc == 2
-    assert "error: Can't change keys for host NQN '*', please use a real NQN" in caplog.text
+    assert "error: Can't change key for host NQN '*', please use a real NQN" in caplog.text
 
 
 def test_change_key_for_host(caplog, gateway):
@@ -585,6 +602,14 @@ def test_change_key_for_host(caplog, gateway):
     assert f"Changing key for host {hostnqn7} on subsystem {subsystem}: Successful" in caplog.text
     assert f"Host {hostnqn7} has a DH-HMAC-CHAP key but subsystem {subsystem} has none, " \
            f"a unidirectional authentication will be used" in caplog.text
+    rc = 0
+    try:
+        cli(["host", "change_key", "--subsystem", subsystem, "--host-nqn", hostnqn7])
+    except SystemExit as sysex:
+        rc = int(str(sysex))
+        pass
+    assert rc == 2
+    assert "error: the following arguments are required: --dhchap-key" in caplog.text
 
 
 def test_change_key_for_host_empty_key(caplog, gateway):
@@ -749,7 +774,7 @@ def test_change_key_host_on_all_hosts(caplog, gateway):
     except SystemExit as sysex:
         rc = int(str(sysex))
         pass
-    assert "Can't change keys for host NQN '*', please use a real NQN" in caplog.text
+    assert "Can't change key for host NQN '*', please use a real NQN" in caplog.text
     assert rc == 2
 
 
@@ -770,7 +795,7 @@ def test_set_subsystem_key_with_empty_key(caplog, gateway):
     caplog.clear()
     rc = 0
     try:
-        cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", ""])
+        cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", ""])
     except SystemExit as sysex:
         rc = int(str(sysex))
         pass
@@ -780,56 +805,56 @@ def test_set_subsystem_key_with_empty_key(caplog, gateway):
 
 def test_set_subsystem_key_with_bad_keys(caplog, gateway):
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap1])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap1])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap1}": key must start with "DHHC-1:' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap2])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap2])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap2}": should contain a ":" delimiter' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap3])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap3])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap3}": invalid key length' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap4])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap4])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap4}": missing hash' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap5])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap5])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap5}": non numeric hash "' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap6])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap6])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap6}": base64 part is missing' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap7])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap7])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap7}": base64 part is invalid' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap8])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap8])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap8}": key must end with ":"' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap9])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap9])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap9}": invalid key length' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap10])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap10])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap10}": invalid key length' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap11])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap11])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap11}": base64 part is invalid' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap12])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap12])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap12}": base64 part is invalid' in caplog.text
     caplog.clear()
-    cli(["subsystem", "add", "--subsystem", subsystem2, "--dhchap-key", badhostdhchap13])
-    assert f'Failure creating subsystem {subsystem2}: Invalid DH-HMAC-CHAP key ' \
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", badhostdhchap13])
+    assert f'Failure creating subsystem {subsystem8}: Invalid DH-HMAC-CHAP key ' \
            f'"{badhostdhchap13}": CRC-32 checksums mismatch' in caplog.text
 
 
@@ -847,6 +872,14 @@ def test_change_subsystem_key(caplog, gateway):
     assert f"Changing key for subsystem {subsystem2}: Successful" in caplog.text
     assert f"Received request to change inband authentication key for host " \
            f"{hostnqn11} on subsystem {subsystem2}" in caplog.text
+    rc = 0
+    try:
+        cli(["subsystem", "change_key", "--subsystem", subsystem2])
+    except SystemExit as sysex:
+        rc = int(str(sysex))
+        pass
+    assert rc == 2
+    assert "error: the following arguments are required: --dhchap-key" in caplog.text
 
 
 def test_change_key_for_subsystem_empty_key(caplog, gateway):
@@ -929,6 +962,59 @@ def test_change_key_for_subsystem_with_bad_keys(caplog, gateway):
            f'"{badhostdhchap13}": CRC-32 checksums mismatch' in caplog.text
 
 
+def test_delete_key(caplog, gateway):
+    caplog.clear()
+    cli(["subsystem", "add", "--subsystem", subsystem8, "--dhchap-key", hostdhchap6,
+         "--no-group-append"])
+    assert f"Adding subsystem {subsystem8}: Successful" in caplog.text
+    caplog.clear()
+    cli(["--format", "json", "subsystem", "list", "--subsystem", subsystem8])
+    assert '"status": 0' in caplog.text
+    assert f'"nqn": "{subsystem8}"' in caplog.text
+    assert '"has_dhchap_key": true' in caplog.text
+    assert '"created_without_key": false' in caplog.text
+    cli(["host", "add", "--subsystem", subsystem8, "--host-nqn", hostnqn1,
+         "--dhchap-key", hostdhchap1])
+    assert f"Adding host {hostnqn1} to {subsystem8}: Successful" in caplog.text
+    caplog.clear()
+    cli(["--format", "json", "host", "list", "--subsystem", subsystem8])
+    assert '"status": 0,' in caplog.text
+    assert f'"subsystem_nqn": "{subsystem8}",' in caplog.text
+    assert f'"nqn": "{hostnqn1}",' in caplog.text
+    assert '"use_dhchap": true,' in caplog.text
+    caplog.clear()
+    cli(["host", "del_key", "--subsystem", subsystem8, "--host-nqn", hostnqn1])
+    assert f"Failure deleting DH-HMAC-CHAP key for host {hostnqn1} on subsystem {subsystem8}: " \
+           f"Host must have a DH-HMAC-CHAP key if the subsystem has one" in caplog.text
+    caplog.clear()
+    cli(["--format", "json", "host", "list", "--subsystem", subsystem8])
+    assert '"status": 0,' in caplog.text
+    assert f'"subsystem_nqn": "{subsystem8}",' in caplog.text
+    assert f'"nqn": "{hostnqn1}",' in caplog.text
+    assert '"use_dhchap": true,' in caplog.text
+    caplog.clear()
+    cli(["subsystem", "del_key", "--subsystem", subsystem8])
+    assert f"Received request to delete inband authentication key for " \
+           f"subsystem {subsystem8}" in caplog.text
+    assert f"Deleting key for subsystem {subsystem8}: Successful" in caplog.text
+    caplog.clear()
+    cli(["--format", "json", "subsystem", "list", "--subsystem", subsystem8])
+    assert '"status": 0' in caplog.text
+    assert f'"nqn": "{subsystem8}"' in caplog.text
+    assert '"has_dhchap_key": false' in caplog.text
+    caplog.clear()
+    cli(["host", "del_key", "--subsystem", subsystem8, "--host-nqn", hostnqn1])
+    assert f"Received request to delete inband authentication key for host {hostnqn1} " \
+           f"on subsystem {subsystem8}" in caplog.text
+    assert f"Deleting key for host {hostnqn1} on subsystem {subsystem8}: Successful" in caplog.text
+    caplog.clear()
+    cli(["--format", "json", "host", "list", "--subsystem", subsystem8])
+    assert '"status": 0,' in caplog.text
+    assert f'"subsystem_nqn": "{subsystem8}",' in caplog.text
+    assert f'"nqn": "{hostnqn1}",' in caplog.text
+    assert '"use_dhchap": false,' in caplog.text
+
+
 def test_encryption_disabled(caplog, gateway_encryption_disabled):
     gw_encryption_disabled = gateway_encryption_disabled
     cli(["subsystem", "add", "--subsystem", subsystem3, "--dhchap-key", hostdhchap9,
@@ -1005,6 +1091,8 @@ def test_encryption_disabled(caplog, gateway_encryption_disabled):
     caplog.clear()
     cli(["--server-port", "5502", "host", "change_key", "--subsystem", subsystem,
          "--host-nqn", hostnqn7, "--dhchap-key", hostdhchap11])
+    assert f"Received request to change inband authentication key for host {hostnqn7} " \
+           f"on subsystem {subsystem}" in caplog.text
     assert f"Changing key for host {hostnqn7} on subsystem {subsystem}: Successful" in caplog.text
     found = 0
     state = gw_encryption_disabled.gateway_state.omap.get_state()
@@ -1055,6 +1143,8 @@ def test_no_encryption_key(caplog, gateway_no_encryption_key):
     caplog.clear()
     cli(["--server-port", "5504", "subsystem", "change_key", "--subsystem", subsystem5,
          "--dhchap-key", hostdhchap9])
+    assert f"Received request to change inband authentication key for " \
+           f"subsystem {subsystem5}" in caplog.text
     assert f"Changing key for subsystem {subsystem5}: Successful" in caplog.text
     assert f"No encryption key or the wrong key was found but we need to encrypt subsystem " \
            f"{subsystem5} DH-HMAC-CHAP key. Any attempt to add host access using a " \

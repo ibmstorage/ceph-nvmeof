@@ -18,6 +18,8 @@ class Rebalance:
 
     INVALID_LOAD_BALANCING_GROUP = 18446744073709551616    # should be bigger than any valid NSID
 
+    INVALID_LOAD_BALANCING_GROUP = 18446744073709551616    # should be bigger than any valid NSID
+
     def __init__(self, gateway_service):
         self.logger = gateway_service.logger
         self.gw_srv = gateway_service
@@ -40,6 +42,7 @@ class Rebalance:
 
     def auto_rebalance_task(self, death_event):
         """Periodically calls for auto rebalance."""
+        self.logger.debug(f"Rebalance thread id is {self.auto_rebalance.native_id}")
         self.logger.debug(f"Rebalance thread id is {self.auto_rebalance.native_id}")
         while (self.rebalance_period_sec > 0):
             if not self.gw_srv.up_and_running:
@@ -64,6 +67,7 @@ class Rebalance:
 
     def find_min_loaded_group(self, grp_list) -> int:
         min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         chosen_ana_group = 0
         chosen_nqn = "null"
         for ana_grp in self.gw_srv.ana_grp_ns_load:
@@ -73,6 +77,7 @@ class Rebalance:
                 if self.gw_srv.ana_grp_ns_load[ana_grp] <= min_load:
                     min_load = self.gw_srv.ana_grp_ns_load[ana_grp]
                     chosen_ana_group = ana_grp
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         self.logger.debug(f"chosen ana-group {chosen_ana_group}")
         if chosen_ana_group != 0:
@@ -85,6 +90,7 @@ class Rebalance:
         return chosen_ana_group, chosen_nqn
 
     def find_min_loaded_group_in_subsys(self, nqn, grp_list) -> int:
+        min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         min_load = Rebalance.INVALID_LOAD_BALANCING_GROUP
         chosen_ana_group = 0
         min_groups = set()
@@ -133,6 +139,9 @@ class Rebalance:
         worker_ana_group = self.ceph_utils.get_rebalance_ana_group()
         self.logger.debug(f"Called rebalance logic: current rebalancing ana "
                           f"group {worker_ana_group}")
+        if worker_ana_group == 0:
+            self.logger.info(f"Auto rebalance is not supported - index {worker_ana_group}")
+            return 1
         if worker_ana_group == 0:
             self.logger.info(f"Auto rebalance is not supported - index {worker_ana_group}")
             return 1
@@ -189,6 +198,12 @@ class Rebalance:
                                 self.gw_srv.subsystem_nsid_bdev_and_uuid.get_namespace_count(
                                     nqn, None, 0)
                             target_subs_per_ana = num_ns_in_nqn / num_active_ana_groups
+                            if target_subs_per_ana < 1:
+                                self.logger.info(f"No need to rebalance for nqn {nqn}: "
+                                                 f"num NS {num_ns_in_nqn} num groups "
+                                                 f"{num_active_ana_groups} ")
+                                # cannot rebalance namespaceses belong to this subsystem
+                                continue
                             self.logger.debug(f"loop: nqn {nqn} ana group {ana_grp} load "
                                               f"{self.gw_srv.ana_grp_subs_load[ana_grp][nqn]}, "
                                               f"num-ns in nqn {num_ns_in_nqn}, target_subs_per_ana "
@@ -259,6 +274,10 @@ class Rebalance:
                                  f"{subsys}, anagrpid: {ana_id}")
                 change_lb_group_req = pb2.namespace_change_load_balancing_group_req(
                     subsystem_nqn=subsys, nsid=nsid, anagrpid=dest_ana_id, auto_lb_logic=True)
+                if not self.gw_srv.up_and_running:
+                    self.logger.warning("SPDK is not up and running!")
+                    return 0
+
                 if not self.gw_srv.up_and_running:
                     self.logger.warning("SPDK is not up and running!")
                     return 0
