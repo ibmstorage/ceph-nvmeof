@@ -1,5 +1,5 @@
 calver==2022.6.26
-certifi==2025.8.3
+certifi==2025.11.12
 Cython==0.29.37
 editables==0.5
 exceptiongroup==1.3.0
