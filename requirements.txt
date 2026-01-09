@@ -1,4 +1,4 @@
-calver==2022.6.26
+calver==2025.10.20
 certifi==2025.8.3
 Cython==0.29.37
 editables==0.5
