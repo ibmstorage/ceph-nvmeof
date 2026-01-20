@@ -170,5 +170,5 @@ FROM --platform=$BUILDPLATFORM python-intermediate
 ARG NVMEOF_CLI_VERSION
 ENV NVMEOF_CLI_VERSION="${NVMEOF_CLI_VERSION}"
 COPY --from=builder /src /src
-
+RUN ln -sf /remote-source/ceph-nvmeof/app/ceph-nvmeof.conf /src/ceph-nvmeof.conf
 ENV PYTHONPATH=/src:$PYTHONPATH
