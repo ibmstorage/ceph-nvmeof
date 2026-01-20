@@ -34,9 +34,10 @@ RUN mkdir -p /src
 ENTRYPOINT ["python3", "-m", "control"]
 CMD ["-c", "ceph-nvmeof.conf"]
 
+RUN subscription-manager unregister
 #------------------------------------------------------------------------------
 # Intermediate layer for Python set-up
-FROM base-$NVMEOF_TARGET AS python-intermediate
+FROM --platform=$BUILDPLATFORM base-$NVMEOF_TARGET AS python-intermediate
 
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
@@ -128,7 +129,7 @@ ENV PYTHONPATH=$APPDIR/__pypackages__/$PYTHON_MAJOR.$PYTHON_MINOR/lib
 WORKDIR $APPDIR
 
 #------------------------------------------------------------------------------
-FROM python-intermediate AS builder-base
+FROM --platform=$BUILDPLATFORM python-intermediate AS builder-base
 ARG PDM_VERSION=2.17.3 \
     PDM_INSTALL_CMD=install \
     PDM_INSTALL_FLAGS="-v --no-isolation --no-self --no-editable" \
@@ -152,7 +153,7 @@ RUN \
     pip install pdm==$PDM_VERSION
 
 #------------------------------------------------------------------------------
-FROM builder-base AS builder
+FROM --platform=$BUILDPLATFORM builder-base AS builder
 
 COPY pyproject.toml pdm.lock pdm.toml ./
 RUN \
@@ -164,11 +165,9 @@ COPY ceph-nvmeof.conf /src/
 RUN pdm run protoc
 
 #------------------------------------------------------------------------------
-FROM python-intermediate
+FROM --platform=$BUILDPLATFORM python-intermediate
 ARG NVMEOF_CLI_VERSION
 ENV NVMEOF_CLI_VERSION="${NVMEOF_CLI_VERSION}"
 COPY --from=builder /src /src
-
+RUN ln -sf /remote-source/ceph-nvmeof/app/ceph-nvmeof.conf /src/ceph-nvmeof.conf
 ENV PYTHONPATH=/src:$PYTHONPATH
-
-RUN subscription-manager unregister || true
