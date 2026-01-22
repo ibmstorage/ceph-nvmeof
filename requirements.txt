@@ -13,7 +13,7 @@ hatch-fancy-pypi-readme==25.1.0
 hatchling==1.27.0
 iniconfig==2.1.0
 netifaces==0.11.0
-packaging==25.0
+packaging==26.0
 pathspec==0.11.2
 pluggy==1.6.0
 prometheus_client==0.19.0
