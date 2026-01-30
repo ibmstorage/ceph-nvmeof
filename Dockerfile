@@ -34,8 +34,6 @@ RUN mkdir -p /src
 ENTRYPOINT ["python3", "-m", "control"]
 CMD ["-c", "ceph-nvmeof.conf"]
 
-RUN subscription-manager unregister
-
 #------------------------------------------------------------------------------
 # Intermediate layer for Python set-up
 FROM --platform=$BUILDPLATFORM base-$NVMEOF_TARGET AS python-intermediate
@@ -43,7 +41,7 @@ FROM --platform=$BUILDPLATFORM base-$NVMEOF_TARGET AS python-intermediate
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
-    dnf update -y
+    dnf update -y --allowerasing --nobest
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=UTF-8 \
@@ -172,3 +170,5 @@ ENV NVMEOF_CLI_VERSION="${NVMEOF_CLI_VERSION}"
 COPY --from=builder /src /src
 
 ENV PYTHONPATH=/src:$PYTHONPATH
+
+RUN subscription-manager unregister || true
