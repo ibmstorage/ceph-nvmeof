@@ -34,6 +34,8 @@ RUN mkdir -p /src
 ENTRYPOINT ["python3", "-m", "control"]
 CMD ["-c", "ceph-nvmeof.conf"]
 
+RUN subscription-manager unregister
+
 #------------------------------------------------------------------------------
 # Intermediate layer for Python set-up
 FROM base-$NVMEOF_TARGET AS python-intermediate
@@ -171,5 +173,3 @@ COPY --from=builder /src /src
 
 RUN ln -sf /remote-source/ceph-nvmeof/app/ceph-nvmeof.conf /src/ceph-nvmeof.conf
 ENV PYTHONPATH=/src:$PYTHONPATH
-
-RUN subscription-manager unregister || true
