@@ -115,6 +115,8 @@ RUN \
     && rpm -ivh /root/rpmbuild/RPMS/$(uname -m)/accel-config-"*".rpm \
     && ls -l /usr/include/accel-config/libaccel_config.h
 
+RUN python3 -m pip install --no-cache-dir "setuptools<69" "packaging<24"
+
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
