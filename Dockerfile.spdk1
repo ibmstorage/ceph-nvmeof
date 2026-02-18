@@ -189,6 +189,8 @@ LABEL org.centos.url="$SPDK_CENTOS_BASE" \
 COPY --from=build /etc/yum.conf /etc/yum.conf
 COPY --from=build /etc/yum.repos.d/ceph.repo /etc/yum.repos.d/ceph.repo
 
+RUN dnf remove -y openssl-fips-provider-so || true
+
 RUN \
     --mount=type=bind,from=build,source=/root/rpmbuild/rpm,target=/rpm \
     --mount=type=cache,target=/var/cache/dnf \
@@ -196,7 +198,7 @@ RUN \
     rpm -vih $SPDK_CENTOS_BASE/centos-stream-repos-$SPDK_CENTOS_REPO_VER.noarch.rpm \
              $SPDK_CENTOS_BASE/centos-gpg-keys-$SPDK_CENTOS_REPO_VER.noarch.rpm \
     && rpm -vih https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
-    && dnf $DNF_OPTS install -y --allowerasing /rpm/$(uname -m)/*.rpm \
+    && dnf $DNF_OPTS install -y  /rpm/$(uname -m)/*.rpm \
     && dnf $DNF_OPTS update -y
 
 ENTRYPOINT [ "/usr/local/bin/nvmf_tgt" ]
