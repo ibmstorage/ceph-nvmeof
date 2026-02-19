@@ -193,18 +193,15 @@ COPY --from=build /etc/yum.repos.d/ceph.repo /etc/yum.repos.d/ceph.repo
 
 RUN \
     --mount=type=bind,from=build,source=/root/rpmbuild/rpm,target=/rpm \
+    --mount=type=bind,from=build,source=/root/rpmbuild/RPMS,target=/rpms \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
     rpm -vih $SPDK_CENTOS_BASE/centos-stream-repos-$SPDK_CENTOS_REPO_VER.noarch.rpm \
              $SPDK_CENTOS_BASE/centos-gpg-keys-$SPDK_CENTOS_REPO_VER.noarch.rpm \
     && rpm -vih https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
-    && dnf $DNF_OPTS install -y \
-         libaccel-config \
-         libaio \
-         fuse3-libs \
-         numactl-libs \
-         ceph-common \
-    && rpm -Uvh --replacepkgs --replacefiles /rpm/$(uname -m)/*.rpm \
+    && dnf $DNF_OPTS install -y libaio fuse3-libs numactl-libs ceph-common \
+    && rpm -Uvh --replacefiles /rpms/$(uname -m)/accel-config-*.rpm \
+    && rpm -Uvh --replacefiles /rpm/$(uname -m)/*.rpm \
     && dnf $DNF_OPTS update -y
 
 ENTRYPOINT [ "/usr/local/bin/nvmf_tgt" ]
