@@ -199,7 +199,7 @@ RUN \
     rpm -vih $SPDK_CENTOS_BASE/centos-stream-repos-$SPDK_CENTOS_REPO_VER.noarch.rpm \
              $SPDK_CENTOS_BASE/centos-gpg-keys-$SPDK_CENTOS_REPO_VER.noarch.rpm \
     && rpm -vih https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
-    && dnf $DNF_OPTS install -y libaio fuse3-libs numactl-libs ceph-common \
+    && dnf $DNF_OPTS install -y pkgconf libaio fuse3-libs numactl-libs ceph-common \
     && rpm -Uvh --replacefiles /rpms/$(uname -m)/accel-config-*.rpm \
     && rpm -Uvh --replacefiles /rpm/$(uname -m)/*.rpm \
     && dnf $DNF_OPTS update -y
