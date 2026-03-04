@@ -22,6 +22,8 @@ RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpm
 
 RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof librbd1 --nobest --allowerasing
 
+RUN mkdir -p /src
+
 ENTRYPOINT ["python3", "-m", "control"]
 CMD ["-c", "/src/ceph-nvmeof.conf"]
 
@@ -154,10 +156,11 @@ COPY . .
 RUN pdm run protoc
 
 #------------------------------------------------------------------------------
-FROM python-intermediate
+FROM --platform=$BUILDPLATFORM python-intermediate
+ARG NVMEOF_CLI_VERSION
+ENV NVMEOF_CLI_VERSION="${NVMEOF_CLI_VERSION}"
 COPY --from=builder /src /src
 
-ENV PYTHONPATH=/src/src:$PYTHONPATH
+ENV PYTHONPATH=/src:$PYTHONPATH
 
-ENTRYPOINT ["python3", "-m", "control.cli"]
-CMD []
+RUN subscription-manager unregister || true
