@@ -16,6 +16,10 @@ CMD []
 ARG SPDK_IMAGE
 FROM --platform=$BUILDPLATFORM ${SPDK_IMAGE} AS base-gateway
 
+COPY $REMOTE_SOURCES $REMOTE_SOURCES_DIR
+
+WORKDIR ${REMOTE_SOURCES_DIR}/${REMOTE_SOURCES}/app
+
 RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id)
 
 RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpms
@@ -25,7 +29,7 @@ RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof librbd1 
 RUN mkdir -p /src
 
 ENTRYPOINT ["python3", "-m", "control"]
-CMD ["-c", "/src/ceph-nvmeof.conf"]
+CMD ["-c", "ceph-nvmeof.conf"]
 
 #------------------------------------------------------------------------------
 # Intermediate layer for Python set-up
@@ -151,6 +155,7 @@ RUN \
     pdm install -v --no-isolation --no-self --no-editable
 
 COPY . .
+COPY ceph-nvmeof.conf /src/
 RUN pdm run protoc
 
 #------------------------------------------------------------------------------
