@@ -6,7 +6,7 @@ ARG SPDK_IMAGE \
 
 #------------------------------------------------------------------------------
 # Base image for NVMEOF_TARGET=cli (nvmeof-cli)
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS base-cli
+FROM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS base-cli
 ENV GRPC_DNS_RESOLVER=native
 ENTRYPOINT ["python3", "-m", "control.cli"]
 CMD []
@@ -17,7 +17,7 @@ ARG SPDK_IMAGE
 ARG REMOTE_SOURCES_DIR=/remote-source
 ARG REMOTE_SOURCES=ceph-nvmeof
 
-FROM --platform=$BUILDPLATFORM ${SPDK_IMAGE} AS base-gateway
+FROM ${SPDK_IMAGE} AS base-gateway
 
 COPY $REMOTE_SOURCES $REMOTE_SOURCES_DIR
 
@@ -36,7 +36,7 @@ CMD ["-c", "ceph-nvmeof.conf"]
 
 #------------------------------------------------------------------------------
 # Intermediate layer for Python set-up
-FROM --platform=$BUILDPLATFORM base-$NVMEOF_TARGET AS python-intermediate
+FROM base-$NVMEOF_TARGET AS python-intermediate
 
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
@@ -128,7 +128,7 @@ ENV PYTHONPATH=$APPDIR/__pypackages__/$PYTHON_MAJOR.$PYTHON_MINOR/lib
 WORKDIR $APPDIR
 
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM python-intermediate AS builder-base
+FROM python-intermediate AS builder-base
 ARG PDM_VERSION=2.17.3 \
     PDM_INSTALL_CMD=install \
     PDM_INSTALL_FLAGS="-v --no-isolation --no-self --no-editable" \
@@ -152,7 +152,7 @@ RUN \
     pip install pdm==$PDM_VERSION
 
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM builder-base AS builder
+FROM builder-base AS builder
 
 COPY pyproject.toml pdm.lock pdm.toml ./
 RUN \
@@ -164,7 +164,7 @@ COPY ceph-nvmeof.conf /src/
 RUN pdm run protoc
 
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM python-intermediate
+FROM python-intermediate
 ARG NVMEOF_CLI_VERSION
 ENV NVMEOF_CLI_VERSION="${NVMEOF_CLI_VERSION}"
 COPY --from=builder /src /src
