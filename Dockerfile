@@ -27,8 +27,6 @@ RUN mkdir -p /src
 ENTRYPOINT ["python3", "-m", "control"]
 CMD ["-c", "/src/ceph-nvmeof.conf"]
 
-RUN subscription-manager unregister
-
 #------------------------------------------------------------------------------
 # Intermediate layer for Python set-up
 FROM base-$NVMEOF_TARGET AS python-intermediate
