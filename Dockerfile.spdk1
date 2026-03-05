@@ -21,8 +21,9 @@ ARG SPDK_CEPH_VERSION \
     SPDK_CONFIGURE_ARGS \
     SPDK_TARGET_ARCH \
     SPDK_MAKEFLAGS \
-    ARCH \
     ACCEL_CONFIG_SRC
+
+RUN ARCH=$(uname -m) && echo "ARCH=$ARCH" >> /etc/environment
 
 RUN <<EOF
     echo Log variables
