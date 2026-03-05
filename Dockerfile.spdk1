@@ -21,6 +21,7 @@ ARG SPDK_CEPH_VERSION \
     SPDK_CONFIGURE_ARGS \
     SPDK_TARGET_ARCH \
     SPDK_MAKEFLAGS \
+    ARCH \
     ACCEL_CONFIG_SRC
 
 RUN <<EOF
@@ -31,6 +32,7 @@ RUN <<EOF
     echo SPDK_TARGET_ARCH=$SPDK_TARGET_ARCH
     echo SPDK_MAKEFLAGS=$SPDK_MAKEFLAGS
     echo CEPH_CLUSTER_CEPH_REPO_BASEURL=$CEPH_CLUSTER_CEPH_REPO_BASEURL
+    echo ARCH=$ARCH
     echo ACCEL_CONFIG_SRC=$ACCEL_CONFIG_SRC
     echo ======================================================================
 EOF
@@ -52,7 +54,7 @@ tsflags=nodocs
 EOF
 
 ARG SPDK_CEPH_VERSION
-ARG CEPH_CLUSTER_CEPH_REPO_BASEURL=https://download.ceph.com/rpm-${SPDK_CEPH_VERSION}/el9/x86_64
+ARG CEPH_CLUSTER_CEPH_REPO_BASEURL=https://download.ceph.com/rpm-${SPDK_CEPH_VERSION}/el9/${ARCH}
 
 COPY <<EOF /etc/yum.repos.d/ceph.repo
 [Ceph]
@@ -139,7 +141,7 @@ ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
     DNF_OPTS
 
-ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/"
+ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/${ARCH}/os/Packages/"
 # This would become obsolete as the release rolls out new packages
 ARG SPDK_CENTOS_REPO_VER="9.0-28.el9"
 
