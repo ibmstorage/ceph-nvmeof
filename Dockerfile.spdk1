@@ -11,6 +11,8 @@ ARG DNF_OPTS="\
   "
 ARG ACCEL_CONFIG_SRC="/accel-config"
 
+ARG ARCH
+
 FROM quay.io/centos/centos:stream9 AS build
 
 ARG SPDK_CEPH_VERSION \
@@ -139,7 +141,8 @@ FROM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3
 
 ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
-    DNF_OPTS
+    DNF_OPTS \
+    ARCH
 
 ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/${ARCH}/os/Packages/"
 # This would become obsolete as the release rolls out new packages
