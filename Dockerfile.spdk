@@ -10,7 +10,7 @@ ARG DNF_OPTS="\
   "
 ARG ACCEL_CONFIG_SRC="/accel-config"
 
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9:latest AS build
+FROM registry.access.redhat.com/ubi9:latest AS build
 
 ARG SPDK_CEPH_VERSION \
     CEPH_CLUSTER_CEPH_REPO_BASEURL \
@@ -119,12 +119,12 @@ RUN make -C ./examples/bdev/bdevperf
 
 RUN subscription-manager unregister
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS rpm-export
+FROM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 AS rpm-export
 COPY --from=build /root/rpmbuild/rpm /rpm
 COPY --from=build /root/rpmbuild/RPMS/x86_64 /rpm
 
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 as spdk
+FROM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3fff3a9b77186c1f91a0abdb274452072 as spdk
 
 ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
@@ -202,7 +202,7 @@ CMD [ "-u", "-r", "/var/tmp/spdk.sock" ]
 
 RUN subscription-manager unregister
 #------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM spdk AS bdevperf
+FROM spdk AS bdevperf
 
 # Default test run duration in secs
 ENV BDEVPERF_TEST_DURATION="90"
