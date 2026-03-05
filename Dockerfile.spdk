@@ -53,10 +53,11 @@ EOF
 
 RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscription-manager register --activationkey=$(cat /run/secrets/activation-key) --org=$(cat /run/secrets/org-id)
 
-RUN subscription-manager repos --enable rhel-9-for-x86_64-baseos-rpms
-RUN subscription-manager repos --enable rhel-9-for-x86_64-appstream-rpms
-RUN subscription-manager repos --enable rhel-9-for-x86_64-highavailability-rpms
-RUN subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
+RUN ARCH=$(uname -m) && \
+   subscription-manager repos --enable rhel-9-for-$(ARCH)-baseos-rpms && \
+   subscription-manager repos --enable rhel-9-for-$(ARCH)-appstream-rpms && \
+   subscription-manager repos --enable rhel-9-for-$(ARCH)-highavailability-rpms && \
+   subscription-manager repos --enable codeready-builder-for-rhel-9-$(ARCH)-rpms
 
 COPY spdk/ /src/
 COPY spdk/scripts/ /src/scripts/
