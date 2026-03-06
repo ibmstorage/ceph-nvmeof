@@ -14,7 +14,7 @@ CMD []
 #------------------------------------------------------------------------------
 # Base image for NVMEOF_TARGET=gateway (nvmeof-gateway)
 ARG SPDK_IMAGE
-FROM --platform=$BUILDPLATFORM ${SPDK_IMAGE} AS base-gateway
+FROM ${SPDK_IMAGE} AS base-gateway
 
 COPY $REMOTE_SOURCES $REMOTE_SOURCES_DIR
 
