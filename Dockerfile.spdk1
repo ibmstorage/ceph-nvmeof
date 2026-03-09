@@ -12,6 +12,7 @@ ARG DNF_OPTS="\
 ARG ACCEL_CONFIG_SRC="/accel-config"
 
 ARG ARCH
+RUN if [[ "$TARGET_ARCH" == "arm64" ]]; then ARCH="aarch64"; elif [[ "$TARGET_ARCH" == "amd64" ]]; then ARCH="x86_64"; else echo "NOT COMPATIBLE ARCH"; fi
 
 FROM quay.io/centos/centos:stream9 AS build
 
