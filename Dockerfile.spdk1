@@ -12,7 +12,6 @@ ARG DNF_OPTS="\
 ARG ACCEL_CONFIG_SRC="/accel-config"
 
 ARG ARCH
-RUN if [[ "$TARGET_ARCH" == "arm64" ]]; then ARCH="aarch64"; elif [[ "$TARGET_ARCH" == "amd64" ]]; then ARCH="x86_64"; else echo "NOT COMPATIBLE ARCH"; fi
 
 FROM quay.io/centos/centos:stream9 AS build
 
@@ -144,6 +143,8 @@ ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
     DNF_OPTS \
     ARCH
+
+RUN if [[ "$TARGET_ARCH" == "arm64" ]]; then ARCH="aarch64"; elif [[ "$TARGET_ARCH" == "amd64" ]]; then ARCH="x86_64"; else echo "NOT COMPATIBLE ARCH"; fi
 
 ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/$ARCH/os/Packages/"
 # This would become obsolete as the release rolls out new packages
