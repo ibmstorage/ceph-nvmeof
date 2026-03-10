@@ -113,14 +113,14 @@ RUN \
     && ls -l /usr/include/accel-config/libaccel_config.h
 
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
-       SPDK_TARGET_ARCH="armv8-a+crypto" && \
-       SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)" \
+       SPDK_TARGET_ARCH="armv8-a+crypto"; \
+       SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)"; \
     elif [ "$TARGETARCH" = "amd64" ]; then \
-       SPDK_TARGET_ARCH="x86-64-v2" && \
-       SPDK_CONFIGURE_ARGS="--with-idxd --with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug" \
+       SPDK_TARGET_ARCH="x86-64-v2"; \
+       SPDK_CONFIGURE_ARGS="--with-idxd --with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug"; \
     else \
-       echo "Unsupported architecture: $TARGETARCH" && \
-       exit 1 \
+       echo "Unsupported architecture: $TARGETARCH"; \
+       exit 1; \
     fi && \
     echo "SPDK_TARGET_ARCH=$SPDK_TARGET_ARCH" >> /etc/environment && \
     echo "SPDK_CONFIGURE_ARGS=$SPDK_CONFIGURE_ARGS" >> /etc/environment
@@ -151,13 +151,13 @@ ARG SPDK_CEPH_VERSION \
     TARGETARCH
 
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
-       ARCH="aarch64"; && \
-       SPDK_TARGET_ARCH="armv8-a+crypto" && \
-       SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)" \
+       ARCH="aarch64"; \
+       SPDK_TARGET_ARCH="armv8-a+crypto"; \
+       SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)"; \
     elif [ "$TARGETARCH" = "amd64" ]; then \
-       ARCH="x86_64"; && \
-       SPDK_TARGET_ARCH="x86-64-v2" && \
-       SPDK_CONFIGURE_ARGS="--with-idxd --with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug" \
+       ARCH="x86_64"; \
+       SPDK_TARGET_ARCH="x86-64-v2"; \
+       SPDK_CONFIGURE_ARGS="--with-idxd --with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug"; \
     else \ 
        echo "Unsupported architecture: $TARGETARCH"; \
     fi && \
