@@ -10,8 +10,7 @@ ARG DNF_OPTS="\
   --setopt=cachedir=/var/cache/dnf \
   "
 ARG ACCEL_CONFIG_SRC="/accel-config"
-
-ARG ARCH
+ARG TARGETARCH
 
 FROM quay.io/centos/centos:stream9 AS build
 
@@ -20,18 +19,13 @@ ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
     DNF_OPTS \
     SPDK_PKGDEP_ARGS \
-    SPDK_CONFIGURE_ARGS \
-    SPDK_TARGET_ARCH \
     SPDK_MAKEFLAGS \
     ACCEL_CONFIG_SRC \
-    ARCH
 
 RUN <<EOF
     echo Log variables
     echo ======================================================================
     echo SPDK_PKGDEP_ARGS=$SPDK_PKGDEP_ARGS
-    echo SPDK_CONFIGURE_ARGS=$SPDK_CONFIGURE_ARGS
-    echo SPDK_TARGET_ARCH=$SPDK_TARGET_ARCH
     echo SPDK_MAKEFLAGS=$SPDK_MAKEFLAGS
     echo CEPH_CLUSTER_CEPH_REPO_BASEURL=$CEPH_CLUSTER_CEPH_REPO_BASEURL
     echo ARCH=$ARCH
@@ -119,6 +113,19 @@ RUN \
     && rpm -ivh /root/rpmbuild/RPMS/$(uname -m)/accel-config-"*".rpm \
     && ls -l /usr/include/accel-config/libaccel_config.h
 
+RUN if [[ "TARGETARCH" == "arm64" ]]; then \
+       SPDK_TARGET_ARCH="armv8-a+crypto" \
+       SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)" \
+    elif [[ "$TARGETARCH" == "amd64" ]]; then \
+       SPDK_TARGET_ARCH="x86-64-v2" \
+       SPDK_CONFIGURE_ARGS="--with-idxd --with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug" \
+    else \
+       echo "Unsupported architecture: $TARGETARCH" \
+       exit 1 \
+    fi && \
+    echo "SPDK_TARGET_ARCH=$SPDK_TARGET_ARCH" >> /etc/environment && \
+    echo "SPDK_CONFIGURE_ARGS=$SPDK_CONFIGURE_ARGS" >> /etc/environment
+
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
@@ -142,15 +149,29 @@ FROM registry.access.redhat.com/ubi9/ubi@sha256:66233eebd72bb5baa25190d4f55e1dc3
 ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
     DNF_OPTS \
-    ARCH
+    TARGETARCH
 
-ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/"
+RUN if [[ "$TARGETARCH" == "arm64" ]]; then \
+       ARCH="aarch64"; \
+       SPDK_TARGET_ARCH="armv8-a+crypto" \
+       SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)" \
+    elif [[ "$TARGETARCH" == "amd64" ]]; then \
+       ARCH="x86_64"; \
+       SPDK_TARGET_ARCH="x86-64-v2" \
+       SPDK_CONFIGURE_ARGS="--with-idxd --with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug" \
+    else \ 
+       echo "Unsupported architecture: $TARGETARCH"; \
+    fi && \
+    echo "ARCH=$ARCH" >> /etc/environment && \
+    echo "SPDK_TARGET_ARCH=$SPDK_TARGET_ARCH" >> /etc/environment && \
+    echo "SPDK_CONFIGURE_ARGS=$SPDK_CONFIGURE_ARGS" >> /etc/environment
+
+
+ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/$ARCH/os/Packages/"
 # This would become obsolete as the release rolls out new packages
 ARG SPDK_CENTOS_REPO_VER="9.0-28.el9"
 
 ARG SPDK_PKGDEP_ARGS \
-    SPDK_CONFIGURE_ARGS \
-    SPDK_TARGET_ARCH \
     SPDK_MAKEFLAGS
 
 ARG SPDK_NAME \
