@@ -112,10 +112,10 @@ RUN \
     && rpm -ivh /root/rpmbuild/RPMS/$(uname -m)/accel-config-"*".rpm \
     && ls -l /usr/include/accel-config/libaccel_config.h
 
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
+RUN if [[ "$TARGETARCH" = "arm64" ]]; then \
        SPDK_TARGET_ARCH="armv8-a+crypto"; \
        SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)"; \
-    elif [ "$TARGETARCH" = "amd64" ]; then \
+    elif [[ "$TARGETARCH" = "amd64" ]]; then \
        SPDK_TARGET_ARCH="x86-64-v2"; \
        SPDK_CONFIGURE_ARGS="--with-idxd --with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug"; \
     else \
@@ -150,11 +150,11 @@ ARG SPDK_CEPH_VERSION \
     DNF_OPTS \
     TARGETARCH
 
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
+RUN if [[ "$TARGETARCH" = "arm64" ]]; then \
        ARCH="aarch64"; \
        SPDK_TARGET_ARCH="armv8-a+crypto"; \
        SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)"; \
-    elif [ "$TARGETARCH" = "amd64" ]; then \
+    elif [[ "$TARGETARCH" = "amd64" ]]; then \
        ARCH="x86_64"; \
        SPDK_TARGET_ARCH="x86-64-v2"; \
        SPDK_CONFIGURE_ARGS="--with-idxd --with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug"; \
