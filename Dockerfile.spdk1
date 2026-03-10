@@ -20,7 +20,7 @@ ARG SPDK_CEPH_VERSION \
     DNF_OPTS \
     SPDK_PKGDEP_ARGS \
     SPDK_MAKEFLAGS \
-    ACCEL_CONFIG_SRC \
+    ACCEL_CONFIG_SRC
 
 RUN <<EOF
     echo Log variables
