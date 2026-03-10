@@ -19,14 +19,13 @@ ARG SPDK_CEPH_VERSION \
     SPDK_VERSION \
     DNF_OPTS \
     SPDK_PKGDEP_ARGS \
-    SPDK_MAKEFLAGS \
-    ACCEL_CONFIG_SRC
+    ACCEL_CONFIG_SRC \
+    TARGETARCH
 
 RUN <<EOF
     echo Log variables
     echo ======================================================================
     echo SPDK_PKGDEP_ARGS=$SPDK_PKGDEP_ARGS
-    echo SPDK_MAKEFLAGS=$SPDK_MAKEFLAGS
     echo CEPH_CLUSTER_CEPH_REPO_BASEURL=$CEPH_CLUSTER_CEPH_REPO_BASEURL
     echo ACCEL_CONFIG_SRC=$ACCEL_CONFIG_SRC
     echo ======================================================================
@@ -114,7 +113,8 @@ RUN \
 
 RUN if [[ "$TARGETARCH" = "arm64" ]]; then \
        SPDK_TARGET_ARCH="armv8-a+crypto"; \
-       SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)"; \
+       SPDK_CONFIGURE_ARGS="--with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug"; \
+       SPDK_MAKEFLAGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)"; \
     elif [[ "$TARGETARCH" = "amd64" ]]; then \
        SPDK_TARGET_ARCH="x86-64-v2"; \
        SPDK_CONFIGURE_ARGS="--with-idxd --with-rbd --disable-tests --disable-unit-tests --disable-examples --enable-debug"; \
@@ -123,7 +123,8 @@ RUN if [[ "$TARGETARCH" = "arm64" ]]; then \
        exit 1; \
     fi && \
     echo "SPDK_TARGET_ARCH=$SPDK_TARGET_ARCH" >> /etc/environment && \
-    echo "SPDK_CONFIGURE_ARGS=$SPDK_CONFIGURE_ARGS" >> /etc/environment
+    echo "SPDK_CONFIGURE_ARGS=$SPDK_CONFIGURE_ARGS" >> /etc/environment && \
+    echo "SPDK_MAKEFLAGS=$SPDK_MAKEFLAGS"
 
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
@@ -154,6 +155,7 @@ RUN if [[ "$TARGETARCH" = "arm64" ]]; then \
        ARCH="aarch64"; \
        SPDK_TARGET_ARCH="armv8-a+crypto"; \
        SPDK_CONFIGURE_ARGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)"; \
+       SPDK_MAKEFLAGS="DPDKBUILD_FLAGS=-Dplatform=generic -j $$(nproc)"; \
     elif [[ "$TARGETARCH" = "amd64" ]]; then \
        ARCH="x86_64"; \
        SPDK_TARGET_ARCH="x86-64-v2"; \
@@ -163,15 +165,15 @@ RUN if [[ "$TARGETARCH" = "arm64" ]]; then \
     fi && \
     echo "ARCH=$ARCH" >> /etc/environment && \
     echo "SPDK_TARGET_ARCH=$SPDK_TARGET_ARCH" >> /etc/environment && \
-    echo "SPDK_CONFIGURE_ARGS=$SPDK_CONFIGURE_ARGS" >> /etc/environment
+    echo "SPDK_CONFIGURE_ARGS=$SPDK_CONFIGURE_ARGS" >> /etc/environment && \
+    echo "SPDK_MAKEFLAGS=$SPDK_MAKEFLAGS"
 
 
 ARG SPDK_CENTOS_BASE="https://mirror.stream.centos.org/9-stream/BaseOS/$ARCH/os/Packages/"
 # This would become obsolete as the release rolls out new packages
 ARG SPDK_CENTOS_REPO_VER="9.0-28.el9"
 
-ARG SPDK_PKGDEP_ARGS \
-    SPDK_MAKEFLAGS
+ARG SPDK_PKGDEP_ARGS
 
 ARG SPDK_NAME \
     SPDK_SUMMARY \
