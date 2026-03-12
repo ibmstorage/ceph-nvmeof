@@ -19,7 +19,7 @@ ARG SPDK_CEPH_VERSION \
     DNF_OPTS \
     SPDK_PKGDEP_ARGS \
     SPDK_CONFIGURE_ARGS \
-    SPDK_TARGET_ARCH \
+    TARGETARCH \
     SPDK_MAKEFLAGS \
     ACCEL_CONFIG_SRC
 
@@ -28,7 +28,7 @@ RUN <<EOF
     echo ======================================================================
     echo SPDK_PKGDEP_ARGS=$SPDK_PKGDEP_ARGS
     echo SPDK_CONFIGURE_ARGS=$SPDK_CONFIGURE_ARGS
-    echo SPDK_TARGET_ARCH=$SPDK_TARGET_ARCH
+    echo TARGETARCH=$TARGETARCH
     echo SPDK_MAKEFLAGS=$SPDK_MAKEFLAGS
     echo CEPH_CLUSTER_CEPH_REPO_BASEURL=$CEPH_CLUSTER_CEPH_REPO_BASEURL
     echo ACCEL_CONFIG_SRC=$ACCEL_CONFIG_SRC
@@ -99,30 +99,42 @@ RUN \
     --mount=type=cache,target=/var/lib/dnf \
     --mount=type=cache,target=/root/.cache/pip \
     dnf groupinstall -y "Development Tools" \
-    && dnf install -y autoconf automake libtool pkgconf rpm-build rpmdevtools \
-    && dnf install -y which asciidoc xmlto libuuid-devel json-c-devel zlib-devel openssl-devel \
-    && mkdir -p $ACCEL_CONFIG_SRC \
-    && git clone https://github.com/intel/idxd-config.git $ACCEL_CONFIG_SRC \
-    && pushd $ACCEL_CONFIG_SRC \
-    && ./autogen.sh \
-    && ./configure CFLAGS='-g -O2' --prefix=/usr --sysconfdir=/etc \
-                   --libdir=/usr/lib64 --enable-test=yes \
-                   --disable-docs \
-    && mkdir -p /root/rpmbuild/SOURCES \
-    && make rhel/accfg.spec \
-    && ./rpmbuild.sh \
-    && ls -l /root/rpmbuild/RPMS/$(uname -m) \
-    && rpm -ivh /root/rpmbuild/RPMS/$(uname -m)/accel-config-"*".rpm \
-    && ls -l /usr/include/accel-config/libaccel_config.h
+    && dnf install -y \
+        autoconf automake libtool pkgconf \
+        rpm-build rpmdevtools \
+        which asciidoc xmlto \
+        libuuid-devel json-c-devel \
+        zlib-devel openssl-devel
 
-RUN \
-    --mount=type=cache,target=/var/cache/dnf \
-    --mount=type=cache,target=/var/lib/dnf \
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+      mkdir -p $ACCEL_CONFIG_SRC && \
+      git clone https://github.com/intel/idxd-config.git $ACCEL_CONFIG_SRC && \
+      pushd $ACCEL_CONFIG_SRC && \
+      ./autogen.sh && \
+      ./configure CFLAGS='-g -O2' --prefix=/usr --sysconfdir=/etc \
+        --libdir=/usr/lib64 --enable-test=yes --disable-docs && \
+      mkdir -p /root/rpmbuild/SOURCES && \
+      make rhel/accfg.spec && \
+      ./rpmbuild.sh && \
+      rpm -ivh /root/rpmbuild/RPMS/$(uname -m)/accel-config-*.rpm && \
+      popd; \
+    else \
+      echo "Skipping accel-config build for $TARGETARCH"; \
+    fi
+
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+        SPDK_TARGET_ARCH="x86-64-v2"; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+        SPDK_TARGET_ARCH="armv8-a+crypto"; \
+    else \
+        echo "Unsupported arch $TARGETARCH"; exit 1; \
+    fi && \
+    echo "Using SPDK_TARGET_ARCH=$SPDK_TARGET_ARCH" && \
     DEPS="no" \
     SPDK_VERSION=${SPDK_VERSION:?} \
     RPM_RELEASE=0 \
     MAKEFLAGS=$SPDK_MAKEFLAGS \
-    rpmbuild/rpm.sh $SPDK_CONFIGURE_ARGS --target-arch="${SPDK_TARGET_ARCH:?}"
+    rpmbuild/rpm.sh $SPDK_CONFIGURE_ARGS --target-arch="$SPDK_TARGET_ARCH"
 
 # build bdevperf example, will not be a part of generated rpm
 RUN make -C ./examples/bdev/bdevperf
@@ -145,7 +157,7 @@ ARG SPDK_CENTOS_REPO_VER="9.0-28.el9"
 
 ARG SPDK_PKGDEP_ARGS \
     SPDK_CONFIGURE_ARGS \
-    SPDK_TARGET_ARCH \
+    TARGETARCH \
     SPDK_MAKEFLAGS
 
 ARG SPDK_NAME \
@@ -174,7 +186,7 @@ LABEL io.spdk.version="$SPDK_VERSION" \
       io.spdk.build.pkgdep-args="$SPDK_PKGDEP_ARGS" \
       io.spdk.build.configure-args="$SPDK_CONFIGURE_ARGS" \
       io.spdk.build.makeflags="$SPDK_MAKEFLAGS" \
-      io.spdk.build.target-arch="$SPDK_TARGET_ARCH" \
+      io.spdk.build.target-arch="$TARGETARCH" \
       io.spdk.build.ceph-release="$SPDK_CEPH_VERSION" \
       io.spdk.git.repo="$SPDK_GIT_REPO" \
       io.spdk.git.branch="$SPDK_GIT_BRANCH" \
