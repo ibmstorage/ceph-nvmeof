@@ -40,6 +40,8 @@ CMD ["-c", "ceph-nvmeof.conf"]
 # Intermediate layer for Python set-up
 FROM base-$NVMEOF_TARGET AS python-intermediate
 
+RUN dnf update -y --exclude=openssl-fips-provider --exclude=openssl-fips-provider-so
+
 RUN \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=cache,target=/var/lib/dnf \
