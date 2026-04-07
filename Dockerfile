@@ -27,7 +27,7 @@ RUN --mount=type=secret,id=org-id --mount=type=secret,id=activation-key subscrip
 
 RUN subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpms
 
-RUN dnf update -y --exclude=openssl-fips-provider
+RUN dnf update -y --exclude=openssl-fips-provider --exclude=openssl-fips-provider-so
 
 RUN dnf install -y python3-rados python3-rbd gdb ceph-mon-client-nvmeof
 
